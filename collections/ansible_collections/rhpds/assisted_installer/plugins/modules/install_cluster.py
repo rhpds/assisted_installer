@@ -5,62 +5,61 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 import requests
-import json
+import time
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.agonzalezrh.install_openshift.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
 
 DOCUMENTATION = r'''
 ---
-module: create_manifest
+module: install_cluster
 
-short_description: Creates a new OpenShift Discovery ISO.
+short_description: Installs the OpenShift cluster.
 
 version_added: "1.0.0"
 
-description: Creates a new OpenShift Discovery ISO for Assisted Installer
+description: creates a new cluster on console.redhat.com/openshift
 
 options:
     cluster_id:
-        description: All hosts that register will be associated with the specified cluster.
+        description: ID of the cluster
         required: true
         type: str
-    content:
-        description: The content for the new manifest to create.
-        required: true
-        type: str
-    file_name:
-        description: The file_name for the new manifest to create.
-        required: true
-        type: str
-    folder:
-        description: The folderfor the new manifest to create.
-        required: true
-        type: str
+    wait_timeout:
+        description: Wait timeout in seconds
+        required: False
+        type: int
+        default: 1800
     offline_token:
         description: Offline token from console.redhat.com
         required: true
+        type: str
+    delay:
+        description: Delay time between checks
+        required: False
+        type: int
+        default: 60
+
 author:
     - Alberto Gonzalez (@agonzalezrh)
-'''  # noqa
+'''
 
 EXAMPLES = r'''
-- name: Create Infrastructure environment
-  agonzalezrh.install_openshift.create_manifest:
+- name: Start cluster installation
+  rhpds.assisted_installer.install_cluster:
     cluster_id: "{{ newcluster.result.id }}"
-    content: "{{ etcd_disk }}"
-    file_name: "10-masters-storage-config"
-    folder: "manifests"
     offline_token: "{{ offline_token }}"
-    pull_secret: "{{ pull_secret }}"
-  register: newinfraenv
+    wait_timeout: 1800
+    delay: 60
 '''
+
 RETURN = r'''
 result:
     description: Result from the API call
     type: dict
     returned: always
+
 '''
 
 
@@ -69,9 +68,8 @@ def run_module():
     module_args = dict(
         cluster_id=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
-        content=dict(type='str', required=True),
-        file_name=dict(type='str', required=True),
-        folder=dict(type='str', required=True),
+        wait_timeout=dict(type='int', required=False, default=1800),
+        delay=dict(type='int', required=False, default=60),
     )
 
     session = requests.Session()
@@ -95,39 +93,54 @@ def run_module():
         argument_spec=module_args,
         supports_check_mode=True
     )
-
     response = access_token._get_access_token(module.params['offline_token'])
     if response.status_code != 200:
         module.fail_json(msg='Error getting access token ', **response.json())
-
-    # if the user is working with this module in only check mode we do not
-    # want to make any changes to the environment, just return the current
-    # state with no modifications
-    if module.check_mode:
-        module.exit_json(**result)
-
-    result['access_token'] = response.json()["access_token"]
-
     headers = {
         "Authorization": "Bearer " + response.json()["access_token"],
         "Content-Type": "application/json"
     }
-    params = module.params.copy()
-    params.pop("cluster_id")
-    params.pop("offline_token")
     response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/"
-        + module.params["cluster_id"] + "/manifests",
+        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/actions/install",
         headers=headers,
-        json=params
     )
-
-    result['result'] = response.json()
-
     if "code" in response.json():
-        module.fail_json(msg='Request failed: ', **result)
-    else:
-        result['changed'] = True
+        module.fail_json(msg='ERROR: ', **response.json())
+
+    retries = 0
+    cluster_installed = False
+    max_retries = module.params['wait_timeout'] / module.params['delay']
+
+    while retries < max_retries and cluster_installed is False:
+        response = access_token._get_access_token(module.params['offline_token'])
+        if response.status_code != 200:
+            module.fail_json(msg='Error getting access token ', **response.json())
+
+        # if the user is working with this module in only check mode we do not
+        # want to make any changes to the environment, just return the current
+        # state with no modifications
+        if module.check_mode:
+            module.exit_json(**result)
+
+        # manipulate or modify the state as needed (this is going to be the
+        # part where your module will do what it needs to do)
+        result['access_token'] = response.json()["access_token"]
+
+        headers = {
+            "Authorization": "Bearer " + response.json()["access_token"],
+            "Content-Type": "application/json"
+        }
+        response = session.get(
+            "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
+            headers=headers,
+        )
+        if "code" in response.json():
+            module.fail_json(msg='ERROR: ', **response.json())
+        if response.json()['status'] == "installed":
+            cluster_installed = True
+            result['result'] = response.json()
+        else:
+            time.sleep(module.params['delay'])
 
     # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results

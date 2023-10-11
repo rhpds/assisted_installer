@@ -3,10 +3,10 @@
 # The namespace of the collection. This can be a company/brand/organization or product namespace under which all
 # content lives. May only contain alphanumeric lowercase characters and underscores. Namespaces cannot start with
 # underscores or numbers and cannot contain consecutive underscores
-namespace: agonzalezrh
+namespace: rhpds
 
 # The name of the collection. Has the same character restrictions as 'namespace'
-name: install_openshift
+name: assisted_installer
 
 # The version of the collection. Must be compatible with semantic versioning
 version: 1.0.4
@@ -44,16 +44,16 @@ tags: []
 dependencies: {}
 
 # The URL of the originating SCM repository
-repository: https://github.com/agonzalezrh/install_openshift
+repository: https://github.com/rhpds/assisted_installer
 
 # The URL to any online docs
-documentation: https://github.com/agonzalezrh/install_openshift/wiki
+documentation: https://github.com/rhpds/assisted_installer/wiki
 
 # The URL to the homepage of the collection/project
-homepage: https://github.com/agonzalezrh/install_openshift/wiki
+homepage: https://github.com/rhpds/assisted_installer/wiki
 
 # The URL to the collection issue tracker
-issues: https://github.com/agonzalezrh/install_openshift/issues
+issues: https://github.com/rhpds/assisted_installer/issues
 
 # A list of file glob-like patterns used to filter any files or directories that should not be included in the build
 # artifact. A pattern is matched from the relative path of the file or directory of the collection directory. This

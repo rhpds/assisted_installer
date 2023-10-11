@@ -24,15 +24,15 @@ The list of modules inside of the collection are the following:
 
 Name | Description
 --- | ---
-agonzalez.install_openshift.create_cluster|Creates a new OpenShift cluster definition.
-agonzalez.install_openshift.create_infra_env|Creates a new OpenShift Discovery ISO.
-agonzalez.install_openshift.delete_cluster|Delete an OpenShift cluster definition.
-agonzalez.install_openshift.download_credentials|Downloads credentials relating to the installed/installing cluster.
-agonzalez.install_openshift.download_files|Downloads files relating to the installed/installing cluster.
-agonzalez.install_openshift.get_credentials|Get the cluster admin credentials.
-agonzalez.install_openshift.install_cluster|Installs the OpenShift cluster.
-agonzalez.install_openshift.list_clusters| Retrieves the list of OpenShift clusters.
-agonzalez.install_openshift.wait_for_hosts|Wait for the hosts to be ready and configure them.
+rhpds.assisted_installer.create_cluster|Creates a new OpenShift cluster definition.
+rhpds.assisted_installer.create_infra_env|Creates a new OpenShift Discovery ISO.
+rhpds.assisted_installer.delete_cluster|Delete an OpenShift cluster definition.
+rhpds.assisted_installer.download_credentials|Downloads credentials relating to the installed/installing cluster.
+rhpds.assisted_installer.download_files|Downloads files relating to the installed/installing cluster.
+rhpds.assisted_installer.get_credentials|Get the cluster admin credentials.
+rhpds.assisted_installer.install_cluster|Installs the OpenShift cluster.
+rhpds.assisted_installer.list_clusters| Retrieves the list of OpenShift clusters.
+rhpds.assisted_installer.wait_for_hosts|Wait for the hosts to be ready and configure them.
 
 
 ## Example Usage
@@ -74,7 +74,7 @@ In this simple example, a **Single Node OpenShift** is created inside **OpenShif
     - "*.apps"
 
 - name: Create Assisted Installer Cluster
-    agonzalezrh.install_openshift.create_cluster:
+    rhpds.assisted_installer.create_cluster:
     name: "{{ cluster_name }}"
     openshift_version: "{{ cluster_version }}"
     base_dns_domain: "{{ cluster_domain }}"
@@ -86,7 +86,7 @@ In this simple example, a **Single Node OpenShift** is created inside **OpenShif
     register: newcluster
 
 - name: Create Infrastructure environment
-    agonzalezrh.install_openshift.create_infra_env:
+    rhpds.assisted_installer.create_infra_env:
     name: "{{ cluster_name }}-infra-env"
     image_type: "{{ cluster_iso_type }}"
     cluster_id: "{{ newcluster.result.id }}"
@@ -110,21 +110,21 @@ In this simple example, a **Single Node OpenShift** is created inside **OpenShif
     storageclass: "gp3-csi"
 
 - name: Wait for the hosts to be ready
-    agonzalezrh.install_openshift.wait_for_hosts:
+    rhpds.assisted_installer.wait_for_hosts:
     cluster_id: "{{ newcluster.result.id }}"
     offline_token: "{{ offline_token }}"
     expected_hosts: 1
     wait_timeout: 600
 
 - name: Start cluster installation
-    agonzalezrh.install_openshift.install_cluster:
+    rhpds.assisted_installer.install_cluster:
     cluster_id: "{{ newcluster.result.id }}"
     offline_token: "{{ offline_token }}"
     wait_timeout: 1200
 
 - name: Obtain OpenShift cluster credentials
     register: credentials
-    agonzalezrh.install_openshift.get_credentials:
+    rhpds.assisted_installer.get_credentials:
     cluster_id: "{{ newcluster.result.id }}"
     offline_token: "{{ offline_token }}"
 
@@ -135,14 +135,14 @@ In this simple example, a **Single Node OpenShift** is created inside **OpenShif
 
 ## Examples Playbooks ready to use
 
-* [List existing clusters](https://github.com/agonzalezrh/install_openshift/blob/main/examples/list_clusters.yaml)
+* [List existing clusters](https://github.com/rhpds/assisted_installer/blob/main/examples/list_clusters.yaml)
 * OpenShift Virtualization/Kubevirt examples:
-    * [Install SNO](https://github.com/agonzalezrh/install_openshift/blob/main/examples/sno_kubevirt.yaml)
-    * [Install SNO with operator LSO](https://github.com/agonzalezrh/install_openshift/blob/main/examples/sno_lso_kubevirt.yaml)
-    * [Install Compact cluster](https://github.com/agonzalezrh/install_openshift/blob/main/examples/compact_kubevirt.yaml)
-    * [Install Compact cluster with ODF](https://github.com/agonzalezrh/install_openshift/blob/main/examples/compact_odf_kubevirt.yaml)
-    * [Install Full cluster](https://github.com/agonzalezrh/install_openshift/blob/main/examples/full_kubevirt.yaml)
-    * [Install Full cluster with ODF](https://github.com/agonzalezrh/install_openshift/blob/main/examples/full_odf_kubevirt.yaml)
+    * [Install SNO](https://github.com/rhpds/assisted_installer/blob/main/examples/sno_kubevirt.yaml)
+    * [Install SNO with operator LSO](https://github.com/rhpds/assisted_installer/blob/main/examples/sno_lso_kubevirt.yaml)
+    * [Install Compact cluster](https://github.com/rhpds/assisted_installer/blob/main/examples/compact_kubevirt.yaml)
+    * [Install Compact cluster with ODF](https://github.com/rhpds/assisted_installer/blob/main/examples/compact_odf_kubevirt.yaml)
+    * [Install Full cluster](https://github.com/rhpds/assisted_installer/blob/main/examples/full_kubevirt.yaml)
+    * [Install Full cluster with ODF](https://github.com/rhpds/assisted_installer/blob/main/examples/full_odf_kubevirt.yaml)
 
 * vShere examples: coming soon
 * other platforms: coming soon

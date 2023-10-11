@@ -7,25 +7,41 @@ __metaclass__ = type
 import requests
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.agonzalezrh.install_openshift.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
 
 DOCUMENTATION = r'''
 ---
-module: get_credentials
+module: list_clusters
 
-short_description: Get the cluster admin credentials.
+short_description: Retrieves the list of OpenShift clusters.
 
 version_added: "1.0.0"
 
-description: Get the cluster admin credentials.
+description: Retrieves the list of OpenShift cluster using Assisted Installer.
 
 options:
-    cluster_id:
-        description: ID of the cluster
-        required: true
+    get_unregistered_clusters:
+        description: Whether to return clusters that have been unregistered.
+        required: false
+        type: bool
+    openshift_cluster_id:
+        description: A specific cluster to retrieve.
+        required: false
         type: str
-
+        choices: [ absent, present ]
+    ams_subscription_ids:
+        description: If non-empty, returned Clusters are filtered to those with matching subscription IDs.
+        required: false
+        type: list
+    with_hosts:
+        description: Include hosts in the returned list.
+        required: false
+        type: bool
+    owner:
+        description: If provided, returns only clusters that are owned by the specified user.
+        required: false
+        type: str
     offline_token:
         description: Offline token from console.redhat.com
         required: true
@@ -36,11 +52,16 @@ author:
 '''
 
 EXAMPLES = r'''
-- name: Obtain OpenShift cluster credentials
-  register: credentials
-  agonzalezrh.install_openshift.get_credentials:
-    cluster_id: "{{ newcluster.result.id }}"
+- name: Create a new SNO Assisted Installer Cluster
+  rhpds.assisted_installer.clusters:
+    name: "{{ cluster_name }}"
+    high_availability_mode: "None"
+    openshift_version: "{{ cluster_version }}"
+    base_dns_domain: "{{ cluster_domain }}"
     offline_token: "{{ offline_token }}"
+    pull_secret: "{{ pull_secret }}"
+    high_availability_mode: "None"
+  register: newcluster
 '''
 
 RETURN = r'''
@@ -54,8 +75,12 @@ result:
 def run_module():
     # define available arguments/parameters a user can pass to the module
     module_args = dict(
-        cluster_id=dict(type='str', required=True),
-        offline_token=dict(type='str', required=True),
+        get_unregistered_clusters=dict(type='str', required=False),
+        openshift_cluster_id=dict(type='str', required=False),
+        ams_subscription_ids=dict(type='list', required=False),
+        with_hosts=dict(type='bool', required=False),
+        owner=dict(type='str', required=False),
+        offline_token=dict(type='str', required=True)
     )
 
     session = requests.Session()
@@ -77,26 +102,33 @@ def run_module():
     # supports check mode
     module = AnsibleModule(
         argument_spec=module_args,
-        supports_check_mode=True
+        supports_check_mode=True,
     )
+
     response = access_token._get_access_token(module.params['offline_token'])
     if response.status_code != 200:
         module.fail_json(msg='Error getting access token ', **response.json())
-    result['access_token'] = response.json()["access_token"]
+
+    # if the user is working with this module in only check mode we do not
+    # want to make any changes to the environment, just return the current
+    # state with no modifications
+    if module.check_mode:
+        module.exit_json(**result)
 
     headers = {
         "Authorization": "Bearer " + response.json()["access_token"],
         "Content-Type": "application/json"
     }
+    params = module.params.copy()
+    params.pop("offline_token")
     response = session.get(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/credentials",
+        "https://api.openshift.com/api/assisted-install/v2/clusters",
         headers=headers,
     )
-    if "code" in response.json():
-        module.fail_json(msg='Request failed: ' + response)
-    else:
-        result['result'] = response.json()
 
+    result['result'] = response.json()
+
+    # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results
     module.exit_json(**result)
 

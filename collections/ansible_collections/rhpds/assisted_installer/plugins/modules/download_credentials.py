@@ -8,18 +8,18 @@ import requests
 import os
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.agonzalezrh.install_openshift.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
 
 DOCUMENTATION = r'''
 ---
 module: download_credentials
 
-short_description: Downloads files relating to the installed/installing cluster.
+short_description: Downloads credentials relating to the installed/installing cluster.
 
 version_added: "1.0.0"
 
-description: Downloads files relating to the installed/installing cluster.
+description: Downloads credentials relating to the installed/installing cluster.
 
 options:
     cluster_id:
@@ -45,7 +45,7 @@ author:
 EXAMPLES = r'''
 - name: Obtain OpenShift cluster credentials
   register: credentials
-  agonzalezrh.install_openshift.get_credentials:
+  rhpds.assisted_installer.get_credentials:
     cluster_id: "{{ newcluster.result.id }}"
     offline_token: "{{ offline_token }}"
 '''
@@ -100,7 +100,7 @@ def run_module():
         "Content-Type": "application/json"
     }
     response = session.get(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/downloads/files",
+        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/downloads/credentials",
         headers=headers,
         params=params
     )

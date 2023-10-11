@@ -8,12 +8,12 @@ import requests
 import json
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.agonzalezrh.install_openshift.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
 
 DOCUMENTATION = r'''
 ---
-module: create_infra_env
+module: create_manifest
 
 short_description: Creates a new OpenShift Discovery ISO.
 
@@ -22,69 +22,36 @@ version_added: "1.0.0"
 description: Creates a new OpenShift Discovery ISO for Assisted Installer
 
 options:
-    additional_ntp_sources:
-        description: A comma-separated list of NTP sources (name or IP) going to be added to all the hosts.
-        required: false
-        type: str
-    additional_trust_bundle:
-        description: 	PEM-encoded X.509 certificate bundle. Hosts discovered by this infra-env will trust the certificates in this bundle. Clusters formed from the hosts discovered by this infra-env will also trust the certificates in this bundle.  
-        required: false
-        type: str
     cluster_id:
         description: All hosts that register will be associated with the specified cluster.
         required: true
         type: str
-    cpu_architecture:
-        description: The CPU architecture of the image (x86_64/arm64/etc).
-        required: false
-        type: str
-    ignition_config_override:
-        description: JSON formatted string containing the user overrides for the initial ignition config.
-        required: false
-        type: str
-    image_type:
-        description: Type of image to be generated, full-iso or minimal-iso.
-        required: false
-        type: str
-    kernel_arguments:
-        description: List of kernel arugment objects that define the operations and values to be applied.
-        required: false
-        type: list
-    name:
-        description: Name of the infra-env.
-        required: false
-        type: str
-    openshift_version:
-        description: Version of the OpenShift cluster (used to infer the RHCOS version - temporary until generic logic implemented).
-        required: false
-        type: str
-    proxy:
-        description: Proxy configuration
-        required: false
-        type: dict
-    pull_secret:
-        description: The pull secret obtained from Red Hat OpenShift Cluster Manager at console.redhat.com/openshift/install/pull-secret.
+    content:
+        description: The content for the new manifest to create.
         required: true
         type: str
-    ssh_authorized_key:
-        description: SSH public key for debugging the installation.
-        required: false
+    file_name:
+        description: The file_name for the new manifest to create.
+        required: true
         type: str
-    static_network_config:
-        description: Static network configuration
-        required: false
-        type: list
+    folder:
+        description: The folderfor the new manifest to create.
+        required: true
+        type: str
+    offline_token:
+        description: Offline token from console.redhat.com
+        required: true
 author:
     - Alberto Gonzalez (@agonzalezrh)
 '''  # noqa
 
 EXAMPLES = r'''
 - name: Create Infrastructure environment
-  agonzalezrh.install_openshift.create_infra_env:
-    name: "{{ cluster_name }}-infra-env"
-    image_type: "{{ cluster_iso_type }}"
+  rhpds.assisted_installer.create_manifest:
     cluster_id: "{{ newcluster.result.id }}"
-    ssh_authorized_key: "{{ ssh_authorized_key }}"
+    content: "{{ etcd_disk }}"
+    file_name: "10-masters-storage-config"
+    folder: "manifests"
     offline_token: "{{ offline_token }}"
     pull_secret: "{{ pull_secret }}"
   register: newinfraenv
@@ -100,20 +67,11 @@ result:
 def run_module():
     # define available arguments/parameters a user can pass to the module
     module_args = dict(
-        name=dict(type='str', required=True),
-        offline_token=dict(type='str', required=True),
         cluster_id=dict(type='str', required=True),
-        pull_secret=dict(type='str', required=True),
-        image_type=dict(type='str', required=False),
-        ssh_authorized_key=dict(type='str', required=False),
-        additional_ntp_sources=dict(type='str', required=False),
-        additional_trust_bundle=dict(type='str', required=False),
-        cpu_architecture=dict(type='str', required=False),
-        ignition_config_override=dict(type='str', required=False),
-        kernel_arguments=dict(type='list', required=False),
-        openshift_version=dict(type='str', required=False),
-        proxy=dict(type='dict', required=False),
-        static_network_config=dict(type='list', required=False),
+        offline_token=dict(type='str', required=True),
+        content=dict(type='str', required=True),
+        file_name=dict(type='str', required=True),
+        folder=dict(type='str', required=True),
     )
 
     session = requests.Session()
@@ -155,10 +113,11 @@ def run_module():
         "Content-Type": "application/json"
     }
     params = module.params.copy()
+    params.pop("cluster_id")
     params.pop("offline_token")
-    params["pull_secret"] = json.loads(params["pull_secret"])
     response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/infra-envs",
+        "https://api.openshift.com/api/assisted-install/v2/clusters/"
+        + module.params["cluster_id"] + "/manifests",
         headers=headers,
         json=params
     )

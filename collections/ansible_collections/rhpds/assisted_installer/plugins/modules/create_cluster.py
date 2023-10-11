@@ -8,7 +8,7 @@ import requests
 import json
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.agonzalezrh.install_openshift.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
 DOCUMENTATION = r'''
 ---
@@ -156,7 +156,7 @@ author:
 
 EXAMPLES = r'''
 - name: Create a new SNO Assisted Installer Cluster
-  agonzalezrh.install_openshift.create_cluster:
+  rhpds.assisted_installer.create_cluster:
     name: "{{ cluster_name }}"
     high_availability_mode: "None"
     openshift_version: "{{ cluster_version }}"

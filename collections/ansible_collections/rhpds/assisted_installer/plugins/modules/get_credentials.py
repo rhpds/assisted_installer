@@ -5,39 +5,32 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 import requests
-import os
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.agonzalezrh.install_openshift.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
 
 DOCUMENTATION = r'''
 ---
-module: download_credentials
+module: get_credentials
 
-short_description: Downloads credentials relating to the installed/installing cluster.
+short_description: Get the cluster admin credentials.
 
 version_added: "1.0.0"
 
-description: Downloads credentials relating to the installed/installing cluster.
+description: Get the cluster admin credentials.
 
 options:
     cluster_id:
         description: ID of the cluster
         required: true
         type: str
+
     offline_token:
         description: Offline token from console.redhat.com
         required: true
         type: str
-    file_name:
-        description: The credential file to be downloaded.
-        required: true
-        type: str
-    dest:
-        description: Destination path
-        required: true
-        type: str
+
 author:
     - Alberto Gonzalez (@agonzalezrh)
 '''
@@ -45,7 +38,7 @@ author:
 EXAMPLES = r'''
 - name: Obtain OpenShift cluster credentials
   register: credentials
-  agonzalezrh.install_openshift.get_credentials:
+  rhpds.assisted_installer.get_credentials:
     cluster_id: "{{ newcluster.result.id }}"
     offline_token: "{{ offline_token }}"
 '''
@@ -63,8 +56,6 @@ def run_module():
     module_args = dict(
         cluster_id=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
-        file_name=dict(type='str', required=True),
-        dest=dict(type='str', required=True)
     )
 
     session = requests.Session()
@@ -92,34 +83,20 @@ def run_module():
     if response.status_code != 200:
         module.fail_json(msg='Error getting access token ', **response.json())
     result['access_token'] = response.json()["access_token"]
-    params = module.params.copy()
-    params.pop("offline_token")
 
     headers = {
         "Authorization": "Bearer " + response.json()["access_token"],
         "Content-Type": "application/json"
     }
     response = session.get(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/downloads/credentials",
+        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/credentials",
         headers=headers,
-        params=params
     )
-    if "code" in response:
+    if "code" in response.json():
         module.fail_json(msg='Request failed: ' + response)
+    else:
+        result['result'] = response.json()
 
-    try:
-        currentcontent = None
-        if os.path.exists(module.params['dest']):
-            currentcontent = open(module.params['dest'], 'rb').read()
-        if currentcontent != response.content:
-            open(module.params['dest'], 'wb').write(response.content)
-            result['changed'] = True
-    except IOError as e:
-        module.fail_json(msg='ERROR: ' + str(e))
-
-    result['result'] = response.content
-
-    # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results
     module.exit_json(**result)
 

@@ -8,7 +8,7 @@ import requests
 import time
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.agonzalezrh.install_openshift.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
 
 DOCUMENTATION = r'''
@@ -51,7 +51,7 @@ author:
 
 EXAMPLES = r'''
 - name: Wait for the hosts to be ready
-  agonzalezrh.install_openshift.wait_for_hosts:
+  rhpds.assisted_installer.wait_for_hosts:
     cluster_id: "{{ newcluster.result.id }}"
     offline_token: "{{ offline_token }}"
     expected_hosts: 1
