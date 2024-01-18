@@ -57,10 +57,6 @@ options:
         description: A comma-separated list of NTP sources (name or IP) going to be added to all the hosts.
         required: false
         type: str
-    api_vip:
-        description: The virtual IP used to reach the OpenShift cluster's API.
-        required: false
-        type: str
     api_vips:
         description: The virtual IPs used to reach the OpenShift cluster's API. Enter one IP address for single-stack clusters, or up to two for dual-stack clusters (at most one IP address per IP stack used). The order of stacks should be the same as order of subnets in Cluster Networks, Service Networks, and Machine Networks.
         required: false
@@ -101,10 +97,6 @@ options:
         description: Explicit ignition endpoint overrides the default ignition endpoint.
         required: false
         type: dict
-    ingress_vip:
-        description: The virtual IP used for cluster ingress traffic.
-        required: false
-        type: str
     ingress_vips:
         description: The virtual IPs used for cluster ingress traffic. Enter one IP address for single-stack clusters, or up to two for dual-stack clusters (at most one IP address per IP stack used). The order of stacks should be the same as order of subnets in Cluster Networks, Service Networks, and Machine Networks.
         required: false
@@ -188,7 +180,6 @@ def run_module():
         olm_operators=dict(type='list', required=False),
         high_availability_mode=dict(type='str', required=False),
         additional_ntp_source=dict(type='str', required=False),
-        api_vip=dict(type='str', required=False),
         api_vips=dict(type='list', required=False),
         cluster_network_cidr=dict(type='str', required=False),
         cluster_network_host_prefix=dict(type='int', required=False),
@@ -199,7 +190,6 @@ def run_module():
         https_proxy=dict(type='str', required=False),
         hyperthreading=dict(type='str', required=False),
         ignition_endpoint=dict(type='dict', required=False),
-        ingress_vip=dict(type='str', required=False),
         ingress_vips=dict(type='list', required=False),
         machine_networks=dict(type='list', required=False),
         network_type=dict(type='str', required=False),
