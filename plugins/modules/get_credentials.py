@@ -8,7 +8,15 @@ import requests
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import api
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import defaults
 
+import logging
+import logging.handlers
+my_logger = logging.getLogger('MyLogger')
+my_logger.setLevel(logging.DEBUG)
+handler = logging.handlers.SysLogHandler(address = '/dev/log')
+my_logger.addHandler(handler)
 
 DOCUMENTATION = r'''
 ---
@@ -21,11 +29,18 @@ version_added: "1.0.0"
 description: Get the cluster admin credentials.
 
 options:
+    ai_api_endpoint:
+        description: The AI Endpoint
+        required: false
+        type: str
+    validate_certificate:
+        description: validate the API certificate
+        required: false
+        type: bool
     cluster_id:
         description: ID of the cluster
         required: true
         type: str
-
     offline_token:
         description: Offline token from console.redhat.com
         required: true
@@ -54,6 +69,8 @@ result:
 def run_module():
     # define available arguments/parameters a user can pass to the module
     module_args = dict(
+        ai_api_endpoint=dict(type='str', required=False, default=defaults.ai_api_endpoint),
+        validate_certificate=dict(type='bool', required=False, default=defaults.validate_certificate),
         cluster_id=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
     )
@@ -79,21 +96,27 @@ def run_module():
         argument_spec=module_args,
         supports_check_mode=True
     )
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
-    result['access_token'] = response.json()["access_token"]
 
     headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
         "Content-Type": "application/json"
     }
+
+    if module.params['offline_token'] != 'None':
+        response = access_token._get_access_token(module.params['offline_token'])
+        if response.status_code != 200:
+            module.fail_json(msg='Error getting access token ', **response.json())
+        result['access_token'] = response.json()["access_token"]
+        headers.update({
+            "Authorization": "Bearer " + response.json()["access_token"],
+        })
+
     response = session.get(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/credentials",
+        f"{module.params['ai_api_endpoint']}/{api.REGISTER_CLUSTER}/{module.params['cluster_id']}/credentials",
         headers=headers,
     )
+
     if "code" in response.json():
-        module.fail_json(msg='Request failed: ' + response)
+        module.fail_json(msg='Request failed: ' + str(response.json()))
     else:
         result['result'] = response.json()
 

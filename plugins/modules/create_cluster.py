@@ -9,6 +9,8 @@ import json
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import api
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import defaults
 
 DOCUMENTATION = r'''
 ---
@@ -21,6 +23,14 @@ version_added: "1.0.0"
 description: Creates a new OpenShift cluster definition using Assisted Installer
 
 options:
+    ai_api_endpoint:
+        description: The AI Endpoint
+        required: false
+        type: str
+    validate_certificate:
+        description: validate the API certificate
+        required: false
+        type: bool
     name:
         description: Name of the cluster
         required: true
@@ -171,6 +181,8 @@ result:
 def run_module():
     # define available arguments/parameters a user can pass to the module
     module_args = dict(
+        ai_api_endpoint=dict(type='str', required=False, default=defaults.ai_api_endpoint),
+        validate_certificate=dict(type='bool', required=False, default=defaults.validate_certificate),
         name=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
         openshift_version=dict(type='str', required=True),
@@ -215,26 +227,37 @@ def run_module():
     module = AnsibleModule(
         argument_spec=module_args,
         supports_check_mode=True,
+
     )
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
+
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    if module.params['offline_token'] != 'None':
+        response = access_token._get_access_token(module.params['offline_token'])
+        if response.status_code != 200:
+            module.fail_json(msg='Error getting access token ', **response.json())
+        headers.update({
+            "Authorization": "Bearer " + response.json()["access_token"],
+        })
+
     # if the user is working with this module in only check mode we do not
     # want to make any changes to the environment, just return the current
     # state with no modifications
     if module.check_mode:
         module.exit_json(**result)
-    headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
-        "Content-Type": "application/json"
-    }
+
     params = module.params.copy()
     params.pop("offline_token")
+    params.pop("ai_api_endpoint")
+    params.pop("validate_certificate")
+
     if "cluster_id" in params:
         params.pop("cluster_id")
     params["pull_secret"] = json.loads(params["pull_secret"])
     response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/clusters",
+        module.params['ai_api_endpoint'] + '/' + api.REGISTER_CLUSTER,
         headers=headers,
         json=params
     )
