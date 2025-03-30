@@ -9,6 +9,8 @@ import json
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import api
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import defaults
 
 
 DOCUMENTATION = r'''
@@ -22,12 +24,24 @@ version_added: "1.0.0"
 description: Creates a new OpenShift Discovery ISO for Assisted Installer
 
 options:
+    ai_api_endpoint:
+        description: The AI Endpoint
+        required: false
+        type: str
+    validate_certificate:
+        description: validate the API certificate
+        required: false
+        type: bool
+    offline_token:
+        description: Offline token from console.redhat.com
+        required: true
+        type: str
     additional_ntp_sources:
         description: A comma-separated list of NTP sources (name or IP) going to be added to all the hosts.
         required: false
         type: str
     additional_trust_bundle:
-        description: 	PEM-encoded X.509 certificate bundle. Hosts discovered by this infra-env will trust the certificates in this bundle. Clusters formed from the hosts discovered by this infra-env will also trust the certificates in this bundle.  
+        description: 	PEM-encoded X.509 certificate bundle. Hosts discovered by this infra-env will trust the certificates in this bundle. Clusters formed from the hosts discovered by this infra-env will also trust the certificates in this bundle.
         required: false
         type: str
     cluster_id:
@@ -100,6 +114,8 @@ result:
 def run_module():
     # define available arguments/parameters a user can pass to the module
     module_args = dict(
+        ai_api_endpoint=dict(type='str', required=False, default=defaults.ai_api_endpoint),
+        validate_certificate=dict(type='bool', required=False, default=defaults.validate_certificate),
         name=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
         cluster_id=dict(type='str', required=True),
@@ -138,9 +154,20 @@ def run_module():
         supports_check_mode=True
     )
 
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    if module.params['offline_token'] != 'None' :
+        response = access_token._get_access_token(module.params['offline_token'])
+        if response.status_code != 200:
+            module.fail_json(msg='Error getting access token ', **response.json())
+
+        result['access_token'] = response.json()["access_token"]
+        headers.update({
+            "Authorization": "Bearer " + response.json()["access_token"],
+        })
+
 
     # if the user is working with this module in only check mode we do not
     # want to make any changes to the environment, just return the current
@@ -148,17 +175,14 @@ def run_module():
     if module.check_mode:
         module.exit_json(**result)
 
-    result['access_token'] = response.json()["access_token"]
-
-    headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
-        "Content-Type": "application/json"
-    }
     params = module.params.copy()
     params.pop("offline_token")
+    params.pop("ai_api_endpoint")
+    params.pop("validate_certificate")
+
     params["pull_secret"] = json.loads(params["pull_secret"])
     response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/infra-envs",
+        module.params['ai_api_endpoint'] + '/' + api.REGISTER_INFRASTRUCTURE,
         headers=headers,
         json=params
     )

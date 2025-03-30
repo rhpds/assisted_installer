@@ -9,7 +9,15 @@ import time
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import api
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import defaults
 
+import logging
+import logging.handlers
+my_logger = logging.getLogger('MyLogger')
+my_logger.setLevel(logging.DEBUG)
+handler = logging.handlers.SysLogHandler(address = '/dev/log')
+my_logger.addHandler(handler)
 
 DOCUMENTATION = r'''
 ---
@@ -22,6 +30,14 @@ version_added: "1.0.0"
 description: Wait for the hosts to be ready and configure them.
 
 options:
+    ai_api_endpoint:
+        description: The AI Endpoint
+        required: false
+        type: str
+    validate_certificate:
+        description: validate the API certificate
+        required: false
+        type: bool
     cluster_id:
         description: ID of the cluster
         required: true
@@ -69,6 +85,8 @@ result:
 def run_module():
     # define available arguments/parameters a user can pass to the module
     module_args = dict(
+        ai_api_endpoint=dict(type='str', required=False, default=defaults.ai_api_endpoint),
+        validate_certificate=dict(type='bool', required=False, default=defaults.validate_certificate),
         cluster_id=dict(type='str', required=True),
         infra_env_id=dict(type='str', required=False),
         offline_token=dict(type='str', required=True),
@@ -104,10 +122,20 @@ def run_module():
     retries = 0
     cluster_ready = False
     max_retries = module.params['wait_timeout'] / module.params['delay']
+    headers = {
+        "Content-Type": "application/json"
+    }
+
     while retries < max_retries and cluster_ready is False:
-        response = access_token._get_access_token(module.params['offline_token'])
-        if response.status_code != 200:
-            module.fail_json(msg='Error getting access token ', **response.json())
+
+        if module.params['offline_token'] != 'None':
+            response = access_token._get_access_token(module.params['offline_token'])
+            if response.status_code != 200:
+                module.fail_json(msg='Error getting access token ', **response.json())
+            headers.update({
+                "Authorization": "Bearer " + response.json()["access_token"],
+            })
+            result['access_token'] = response.json()["access_token"]
 
         # if the user is working with this module in only check mode we do not
         # want to make any changes to the environment, just return the current
@@ -117,29 +145,29 @@ def run_module():
 
         # manipulate or modify the state as needed (this is going to be the
         # part where your module will do what it needs to do)
-        result['access_token'] = response.json()["access_token"]
-
-        headers = {
-            "Authorization": "Bearer " + response.json()["access_token"],
-            "Content-Type": "application/json"
-        }
         response = session.get(
-            "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
+            module.params['ai_api_endpoint'] + '/' + api.REGISTER_CLUSTER + "/" + module.params['cluster_id'],
             headers=headers,
         )
         if "code" in response.json():
             module.fail_json(msg='Request failed: ', **response.json())
+
         ready_hosts = 0
         for host in response.json()['hosts']:
+            my_logger.debug(f"host: {host['requested_hostname']} status={host['status']}")
             if host['status'] == "known":
                 ready_hosts = ready_hosts + 1
+                my_logger.debug(f"Found host: {host['requested_hostname']} (total={ready_hosts})")
             if 'configure_hosts' in module.params and module.params['configure_hosts'] is not None:
                 for configure_host in module.params['configure_hosts']:
+                    my_logger.debug('testing config host for: ' + configure_host['hostname'])
                     if host['requested_hostname'] == configure_host['hostname']:
+                        # If the role of the host not match the requested role
                         if host['role'] != configure_host['role']:
+                            my_logger.debug(f"Set host {host['requested_hostname']} role to {configure_host['role']}")
                             data = {"host_role": configure_host['role']}
                             responsepatch = session.patch(
-                                "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                module.params['ai_api_endpoint'] + '/' + api.REGISTER_INFRASTRUCTURE + "/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
                                 headers=headers,
                                 json=data
                             )
@@ -147,9 +175,10 @@ def run_module():
                                 module.fail_json(msg='Request failed: ', **responsepatch.json())
                         if "installation_disk" in configure_host:
                             if host['installation_disk_path'] != configure_host['installation_disk']:
+                                my_logger.debug(f"Set host {host['requested_hostname']} install disk to {configure_host['installation_disk']} was: {host['installation_disk_path']}")
                                 data = {"disks_selected_config": [{"id": configure_host['installation_disk'], "role": "install"}]}
                                 responsepatch = session.patch(
-                                    "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                    module.params['ai_api_endpoint'] + '/' + api.REGISTER_INFRASTRUCTURE + "/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
                                     headers=headers,
                                     json=data
                                 )
@@ -160,6 +189,7 @@ def run_module():
                 cluster_ready = True
                 result['result'] = response.json()
             else:
+                my_logger.debug(f"Expected {module.params['expected_hosts']} hosts, got {ready_hosts}")
                 time.sleep(module.params['delay'])
 
     result['result'] = response.json()

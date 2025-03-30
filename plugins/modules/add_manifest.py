@@ -5,6 +5,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 import requests
+import os
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
@@ -20,13 +21,12 @@ my_logger.addHandler(handler)
 
 DOCUMENTATION = r'''
 ---
-module: get_credentials
-
-short_description: Get the cluster admin credentials.
+module: add_manifest
+short_description: Downloads files relating to the installed/installing cluster.
 
 version_added: "1.0.0"
 
-description: Get the cluster admin credentials.
+description: Downloads files relating to the installed/installing cluster.
 
 options:
     ai_api_endpoint:
@@ -45,17 +45,30 @@ options:
         description: Offline token from console.redhat.com
         required: true
         type: str
-
+    file_name:
+        description: The manifest name.
+        required: true
+        type: str
+    content:
+        description: The manifest content.
+        required: true
+        type: str
+    folder:
+        description: The folder for the manifest.
+        required: true
+        type: str
 author:
-    - Alberto Gonzalez (@agonzalezrh)
+    - Rabin (@rabin-io)
 '''
 
 EXAMPLES = r'''
-- name: Obtain OpenShift cluster credentials
-  register: credentials
-  rhpds.assisted_installer.get_credentials:
+- name: Add custom manifest
+  rhpds.assisted_installer.add_manifest:
     cluster_id: "{{ newcluster.result.id }}"
     offline_token: "{{ offline_token }}"
+    file_name: "xyz.yaml"
+    content: "{{ lookup('file', 'manifest.yaml') }}"
+    folder: manifests
 '''
 
 RETURN = r'''
@@ -73,6 +86,9 @@ def run_module():
         validate_certificate=dict(type='bool', required=False, default=defaults.validate_certificate),
         cluster_id=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
+        file_name=dict(type='str', required=True),
+        content=dict(type='str', required=True),
+        folder=dict(type='str', required=False, default='manifests'),
     )
 
     session = requests.Session()
@@ -94,7 +110,7 @@ def run_module():
     # supports check mode
     module = AnsibleModule(
         argument_spec=module_args,
-        supports_check_mode=True
+        supports_check_mode=False
     )
 
     headers = {
@@ -110,16 +126,30 @@ def run_module():
             "Authorization": "Bearer " + response.json()["access_token"],
         })
 
-    response = session.get(
-        f"{module.params['ai_api_endpoint']}/{api.REGISTER_CLUSTER}/{module.params['cluster_id']}/credentials",
+    data = {
+        "file_name": module.params['file_name'],
+        "content": module.params['content'],
+        "folder": module.params['folder']
+    }
+
+    my_logger.debug(str(data))
+
+    response = session.post(
+        f"{module.params['ai_api_endpoint']}/{api.REGISTER_CLUSTER}/{module.params['cluster_id']}/manifests",
         headers=headers,
+        json=data
     )
 
-    if "code" in response.json():
+    if "code" in response:
         module.fail_json(msg='Request failed: ' + str(response.json()))
     else:
-        result['result'] = response.json()
+        result['changed'] = True
 
+    my_logger.debug(str(response.json()))
+
+    result['result'] = response.content
+
+    # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results
     module.exit_json(**result)
 
