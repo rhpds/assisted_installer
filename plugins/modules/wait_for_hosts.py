@@ -30,7 +30,6 @@ options:
         description: The infra-env ID of the host to be updated. Required with hosts are assigned.
         required: false
         type: str
-        default: 10
     offline_token:
         description: Offline token from console.redhat.com
         required: true
@@ -48,6 +47,7 @@ options:
         description: Delay time between checks
         required: False
         type: int
+        default: 10
 
 author:
     - Alberto Gonzalez (@agonzalezrh)
