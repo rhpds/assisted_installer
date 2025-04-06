@@ -54,6 +54,10 @@ options:
         description: Name of the infra-env.
         required: false
         type: str
+    offline_token:
+        description: Offline token from console.redhat.com
+        required: true
+        type: str
     openshift_version:
         description: Version of the OpenShift cluster (used to infer the RHCOS version - temporary until generic logic implemented).
         required: false
