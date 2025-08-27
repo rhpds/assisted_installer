@@ -30,6 +30,10 @@ options:
         description: The infra-env ID of the host to be updated. Required with hosts are assigned.
         required: false
         type: str
+    offline_token:
+        description: Offline token from console.redhat.com
+        required: true
+        type: str
     expected_hosts:
         description: Expected number of the hosts
         required: true
