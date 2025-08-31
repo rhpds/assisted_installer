@@ -141,8 +141,7 @@ def run_module():
                 if response.json()['status'] == 'adding-hosts':
                     responsepost = session.post(
                         "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'] + "/actions/install",
-                        headers=headers,
-                        json=data
+                        headers=headers
                     )
                     if "code" in responsepost.json():
                         module.fail_json(msg='Request failed: ', **responsepatch.json())
