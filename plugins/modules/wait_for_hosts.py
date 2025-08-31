@@ -134,9 +134,20 @@ def run_module():
         if "code" in response.json():
             module.fail_json(msg='Request failed: ', **response.json())
         ready_hosts = 0
+        added_hosts = 0
         for host in response.json()['hosts']:
             if host['status'] == "known":
                 ready_hosts = ready_hosts + 1
+                if response.json()['status'] == 'adding-hosts':
+                    responsepost = session.post(
+                        "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'] + "/actions/install",
+                        headers=headers,
+                        json=data
+                    )
+                    if "code" in responsepost.json():
+                        module.fail_json(msg='Request failed: ', **responsepatch.json())
+            if host['status'] == 'added-to-existing-cluster':
+                added_hosts = added_hosts + 1
             if 'configure_hosts' in module.params and module.params['configure_hosts'] is not None:
                 for configure_host in module.params['configure_hosts']:
                     if host['requested_hostname'] == configure_host['hostname']:
@@ -161,6 +172,9 @@ def run_module():
                                     module.fail_json(msg='Request failed: ', **responsepatch.json())
 
             if ready_hosts == module.params['expected_hosts'] and response.json()['status'] == "ready":
+                cluster_ready = True
+                result['result'] = response.json()
+            elif added_hosts == module.params['expected_hosts'] and response.json()['status'] == "adding-hosts":
                 cluster_ready = True
                 result['result'] = response.json()
             else:
