@@ -101,7 +101,7 @@ def run_module():
     response = session.patch(
         "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
         headers=headers,
-        data=json.dumps(module.params["cluster_update_params"])
+        data=module.params["cluster_update_params"]
     )
     if len(str(response.content)) > 5:
         module.fail_json(msg='Request failed: ' + str(response.content))
