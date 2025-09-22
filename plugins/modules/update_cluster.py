@@ -103,7 +103,7 @@ def run_module():
         headers=headers,
         data=module.params["cluster_update_params"]
     )
-    if len(str(response.content)) > 5:
+    if "Error" in str(response.content):
         module.fail_json(msg='Request failed: ' + str(response.content))
     else:
         result['result'] = str(response.content)
