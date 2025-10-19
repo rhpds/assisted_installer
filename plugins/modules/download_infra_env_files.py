@@ -35,6 +35,10 @@ options:
         description: The credential file to be downloaded.
         required: true
         type: str
+    dest:
+        description: Destination path
+        required: true
+        type: str
     mac:
         description: Mac address of the host running ipxe script.
         required: false
@@ -56,6 +60,7 @@ EXAMPLES = r'''
     infra_env_id: "{{ newinfraenv.result.id }}"
     offline_token: "{{ offline_token }}"
     file_name: "ipxe-script"
+    dest: /tmp/ipxe
 '''
 
 RETURN = r'''
@@ -69,10 +74,13 @@ result:
 def run_module():
     # define available arguments/parameters a user can pass to the module
     module_args = dict(
-        cluster_id=dict(type='str', required=True),
+        infra_env_id=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
         file_name=dict(type='str', required=True),
-        dest=dict(type='str', required=True)
+        dest=dict(type='str', required=True),
+        mac=dict(type='str', required=False),
+        ipxe_script_type=dict(type='str', required=False),
+        discovery_iso_type=dict(type='str', required=False)
     )
 
     session = requests.Session()
