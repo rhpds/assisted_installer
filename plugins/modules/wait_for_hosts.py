@@ -169,6 +169,15 @@ def run_module():
                                 )
                                 if "code" in responsepatch.json():
                                     module.fail_json(msg='Request failed: ', **responsepatch.json())
+                        if "newname" in configure_host:
+                                data = {"host_name": config_host["newname"]}
+                                responsepatch = session.patch(
+                                    "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                    headers=headers,
+                                    json=data
+                                )
+                                if "code" in responsepatch.json():
+                                    module.fail_json(msg='Request failed: ', **responsepatch.json())                        
 
             if ready_hosts == module.params['expected_hosts'] and response.json()['status'] == "ready":
                 cluster_ready = True

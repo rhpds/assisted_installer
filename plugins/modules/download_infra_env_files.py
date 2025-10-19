@@ -1,0 +1,140 @@
+#!/usr/bin/python
+
+# Copyright: (c) 2023, Alberto Gonzalez <alberto.gonzalez@redhat.com>
+# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+import requests
+import os
+
+from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
+
+
+DOCUMENTATION = r'''
+---
+module: download_infra_env_files
+
+short_description: Downloads the customized ignition file for this host
+
+version_added: "1.0.0"
+
+description: Downloads the customized ignition file for this host
+
+options:
+    infra_env_id:
+        description: The infra-env ID of the host to be updated. Required with hosts are assigned.
+        required: false
+        type: str
+
+    offline_token:
+        description: Offline token from console.redhat.com
+        required: true
+        type: str
+    file_name:
+        description: The credential file to be downloaded.
+        required: true
+        type: str
+    mac:
+        description: Mac address of the host running ipxe script.
+        required: false
+        type: str
+    ipxe_script_type:
+        description: Specify the script type to be served for iPXE.
+        required: false
+    discovery_iso_type:
+        description: Overrides the ISO type for the disovery ignition, either 'full-iso' or 'minimal-iso'.
+        required: false
+author:
+    - Alberto Gonzalez (@agonzalezrh)
+'''
+
+EXAMPLES = r'''
+- name: Obtain OpenShift cluster credentials
+  register: credentials
+  rhpds.assisted_installer.get_credentials:
+    infra_env_id: "{{ newinfraenv.result.id }}"
+    offline_token: "{{ offline_token }}"
+    file_name: "ipxe-script"
+'''
+
+RETURN = r'''
+result:
+    description: Result from the API call
+    type: dict
+    returned: always
+'''
+
+
+def run_module():
+    # define available arguments/parameters a user can pass to the module
+    module_args = dict(
+        cluster_id=dict(type='str', required=True),
+        offline_token=dict(type='str', required=True),
+        file_name=dict(type='str', required=True),
+        dest=dict(type='str', required=True)
+    )
+
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(max_retries=5)
+    session.mount('https://', adapter)
+
+    # seed the result dict in the object
+    # we primarily care about changed and state
+    # changed is if this module effectively modified the target
+    # state will include any data that you want your module to pass back
+    # for consumption, for example, in a subsequent task
+    result = dict(
+        changed=False,
+    )
+
+    # the AnsibleModule object will be our abstraction working with Ansible
+    # this includes instantiation, a couple of common attr would be the
+    # args/params passed to the execution, as well as if the module
+    # supports check mode
+    module = AnsibleModule(
+        argument_spec=module_args,
+        supports_check_mode=True
+    )
+    response = access_token._get_access_token(module.params['offline_token'])
+    if response.status_code != 200:
+        module.fail_json(msg='Error getting access token ', **response.json())
+    result['access_token'] = response.json()["access_token"]
+    params = module.params.copy()
+    params.pop("offline_token")
+
+    headers = {
+        "Authorization": "Bearer " + response.json()["access_token"],
+        "Content-Type": "application/json"
+    }
+    response = session.get(
+        "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/downloads/files",
+        headers=headers,
+        params=params
+    )
+    if "code" in response:
+        module.fail_json(msg='Request failed: ' + response)
+
+    try:
+        currentcontent = None
+        if os.path.exists(module.params['dest']):
+            currentcontent = open(module.params['dest'], 'rb').read()
+        if currentcontent != response.content:
+            open(module.params['dest'], 'wb').write(response.content)
+            result['changed'] = True
+    except IOError as e:
+        module.fail_json(msg='ERROR: ' + str(e))
+
+    result['result'] = response.content
+
+    # in the event of a successful module execution, you will want to
+    # simple AnsibleModule.exit_json(), passing the key/value results
+    module.exit_json(**result)
+
+
+def main():
+    run_module()
+
+
+if __name__ == '__main__':
+    main()
