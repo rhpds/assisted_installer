@@ -29,7 +29,9 @@ rhpds.assisted_installer.create_infra_env|Creates a new OpenShift Discovery ISO.
 rhpds.assisted_installer.delete_cluster|Delete an OpenShift cluster definition.
 rhpds.assisted_installer.download_credentials|Downloads credentials relating to the installed/installing cluster.
 rhpds.assisted_installer.download_files|Downloads files relating to the installed/installing cluster.
+rhpds.assisted_installer.download_infra_env_files|Downloads files related to the infra environment
 rhpds.assisted_installer.get_credentials|Get the cluster admin credentials.
+rhpds.assisted_installer.get_pull_secret|Get access token from registries in docker format
 rhpds.assisted_installer.install_cluster|Installs the OpenShift cluster.
 rhpds.assisted_installer.list_clusters| Retrieves the list of OpenShift clusters.
 rhpds.assisted_installer.wait_for_hosts|Wait for the hosts to be ready and configure them.
