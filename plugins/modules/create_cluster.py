@@ -141,6 +141,11 @@ options:
         description: Indicate if virtual IP DHCP allocation mode is enabled.
         required: false
         type: bool
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 
 author:
     - Alberto Gonzalez (@agonzalezrh)
@@ -200,7 +205,8 @@ def run_module():
         service_network_cidr=dict(type='str', required=False),
         ssh_public_key=dict(type='str', required=False),
         tags=dict(type='str', required=False),
-        vip_dhcp_allocation=dict(type='bool', required=False)
+        vip_dhcp_allocation=dict(type='bool', required=False),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
     session = requests.Session()
     adapter = requests.adapters.HTTPAdapter(max_retries=5)
@@ -230,11 +236,12 @@ def run_module():
     }
     params = module.params.copy()
     params.pop("offline_token")
+    api_endpoint = params.pop("api_endpoint")
     if "cluster_id" in params:
         params.pop("cluster_id")
     params["pull_secret"] = json.loads(params["pull_secret"])
     response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/clusters",
+        api_endpoint + "/api/assisted-install/v2/clusters",
         headers=headers,
         json=params
     )

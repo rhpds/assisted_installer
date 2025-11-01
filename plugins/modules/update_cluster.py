@@ -36,7 +36,11 @@ options:
         description: The properties to update (string with json)
         required: true
         type: str
-
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 
 author:
     - Alberto Gonzalez (@agonzalezrh)
@@ -65,6 +69,7 @@ def run_module():
         cluster_id=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
         cluster_update_params=dict(type='str', required=True),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
     session = requests.Session()
@@ -99,7 +104,7 @@ def run_module():
         "Accept": "'application/json'"
     }
     response = session.patch(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
+        module.params['api_endpoint'] + "/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
         headers=headers,
         data=module.params["cluster_update_params"]
     )

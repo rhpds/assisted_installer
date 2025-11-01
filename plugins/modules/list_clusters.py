@@ -46,6 +46,11 @@ options:
         description: Offline token from console.redhat.com
         required: true
         type: str
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 
 author:
     - Alberto Gonzalez (@agonzalezrh)
@@ -80,7 +85,8 @@ def run_module():
         ams_subscription_ids=dict(type='list', required=False),
         with_hosts=dict(type='bool', required=False),
         owner=dict(type='str', required=False),
-        offline_token=dict(type='str', required=True)
+        offline_token=dict(type='str', required=True),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
     session = requests.Session()
@@ -121,8 +127,9 @@ def run_module():
     }
     params = module.params.copy()
     params.pop("offline_token")
+    api_endpoint = params.pop("api_endpoint")
     response = session.get(
-        "https://api.openshift.com/api/assisted-install/v2/clusters",
+        api_endpoint + "/api/assisted-install/v2/clusters",
         headers=headers,
     )
 

@@ -40,6 +40,11 @@ options:
         required: False
         type: int
         default: 60
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 
 author:
     - Alberto Gonzalez (@agonzalezrh)
@@ -70,6 +75,7 @@ def run_module():
         offline_token=dict(type='str', required=True),
         wait_timeout=dict(type='int', required=False, default=1800),
         delay=dict(type='int', required=False, default=60),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
     session = requests.Session()
@@ -100,8 +106,9 @@ def run_module():
         "Authorization": "Bearer " + response.json()["access_token"],
         "Content-Type": "application/json"
     }
+    api_endpoint = module.params['api_endpoint']
     response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/actions/install",
+        api_endpoint + "/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/actions/install",
         headers=headers,
     )
     if "code" in response.json():
@@ -131,7 +138,7 @@ def run_module():
             "Content-Type": "application/json"
         }
         response = session.get(
-            "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
+            api_endpoint + "/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
             headers=headers,
         )
         if "code" in response.json():
@@ -142,7 +149,7 @@ def run_module():
         elif response.json()['status'] == "ready":
             # Retry start installation if the cluster was moved to ready again
             response = session.post(
-                "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/actions/install",
+                api_endpoint + "/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/actions/install",
                 headers=headers,
             )
             if "code" in response.json():

@@ -78,6 +78,11 @@ options:
         description: Static network configuration
         required: false
         type: list
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 author:
     - Alberto Gonzalez (@agonzalezrh)
 '''  # noqa
@@ -118,6 +123,7 @@ def run_module():
         openshift_version=dict(type='str', required=False),
         proxy=dict(type='dict', required=False),
         static_network_config=dict(type='list', required=False),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
     session = requests.Session()
@@ -160,9 +166,10 @@ def run_module():
     }
     params = module.params.copy()
     params.pop("offline_token")
+    api_endpoint = params.pop("api_endpoint")
     params["pull_secret"] = json.loads(params["pull_secret"])
     response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/infra-envs",
+        api_endpoint + "/api/assisted-install/v2/infra-envs",
         headers=headers,
         json=params
     )

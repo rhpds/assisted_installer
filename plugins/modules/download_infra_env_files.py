@@ -49,6 +49,11 @@ options:
     discovery_iso_type:
         description: Overrides the ISO type for the disovery ignition, either 'full-iso' or 'minimal-iso'.
         required: false
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 author:
     - Alberto Gonzalez (@agonzalezrh)
 '''
@@ -80,7 +85,8 @@ def run_module():
         dest=dict(type='str', required=True),
         mac=dict(type='str', required=False),
         ipxe_script_type=dict(type='str', required=False),
-        discovery_iso_type=dict(type='str', required=False)
+        discovery_iso_type=dict(type='str', required=False),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
     session = requests.Session()
@@ -116,7 +122,7 @@ def run_module():
         "Content-Type": "application/json"
     }
     response = session.get(
-        "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/downloads/files",
+        module.params['api_endpoint'] + "/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/downloads/files",
         headers=headers,
         params=params
     )

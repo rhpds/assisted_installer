@@ -31,7 +31,11 @@ options:
         required: false
         type: str
         default: false
-
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 
 author:
     - Alberto Gonzalez (@agonzalezrh)
@@ -58,6 +62,7 @@ def run_module():
         cluster_id=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
         cancel=dict(type='bool', required=False, default=False),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
     session = requests.Session()
@@ -96,9 +101,10 @@ def run_module():
         "Authorization": "Bearer " + response.json()["access_token"],
         "Content-Type": "application/json"
     }
+    api_endpoint = module.params['api_endpoint']
     if module.params['cancel']:
         response = session.post(
-            "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params["cluster_id"] + "/actions/cancel",
+            api_endpoint + "/api/assisted-install/v2/clusters/" + module.params["cluster_id"] + "/actions/cancel",
             headers=headers,
         )
         if len(response.content) > 0 and "code" in response.json():
@@ -108,7 +114,7 @@ def run_module():
             result['changed'] = True
 
     response = session.delete(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params["cluster_id"],
+        api_endpoint + "/api/assisted-install/v2/clusters/" + module.params["cluster_id"],
         headers=headers,
     )
     # Key code only appears if there is an error
@@ -119,13 +125,13 @@ def run_module():
         result['changed'] = True
 
     response = session.get(
-        "https://api.openshift.com/api/assisted-install/v2/infra-envs/",
+        api_endpoint + "/api/assisted-install/v2/infra-envs/",
         headers=headers,
         params={"cluster_id": module.params["cluster_id"]}
     )
     for infra_env in response.json():
         response = session.delete(
-            "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + infra_env['id'],
+            api_endpoint + "/api/assisted-install/v2/infra-envs/" + infra_env['id'],
             headers=headers,
         )
         if len(response.content) > 0 and "code" in response.json():

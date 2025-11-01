@@ -48,6 +48,11 @@ options:
         required: False
         type: int
         default: 10
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 
 author:
     - Alberto Gonzalez (@agonzalezrh)
@@ -80,6 +85,7 @@ def run_module():
         wait_timeout=dict(type='int', required=False, default=600),
         delay=dict(type='int', required=False, default=10),
         configure_hosts=dict(type='list', required=False),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
     # seed the result dict in the object
@@ -108,6 +114,7 @@ def run_module():
     retries = 0
     cluster_ready = False
     max_retries = module.params['wait_timeout'] / module.params['delay']
+    api_endpoint = module.params['api_endpoint']
     while retries < max_retries and cluster_ready is False:
         response = access_token._get_access_token(module.params['offline_token'])
         if response.status_code != 200:
@@ -128,7 +135,7 @@ def run_module():
             "Content-Type": "application/json"
         }
         response = session.get(
-            "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
+            api_endpoint + "/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
             headers=headers,
         )
         if "code" in response.json():
@@ -140,7 +147,7 @@ def run_module():
                 ready_hosts = ready_hosts + 1
                 if response.json()['status'] == 'adding-hosts':
                     responsepost = session.post(
-                        "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'] + "/actions/install",
+                        api_endpoint + "/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'] + "/actions/install",
                         headers=headers
                     )
                     if "code" in responsepost.json():
@@ -153,7 +160,7 @@ def run_module():
                         if host['role'] != configure_host['role']:
                             data = {"host_role": configure_host['role']}
                             responsepatch = session.patch(
-                                "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                api_endpoint + "/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
                                 headers=headers,
                                 json=data
                             )
@@ -163,7 +170,7 @@ def run_module():
                             if host['installation_disk_path'] != configure_host['installation_disk']:
                                 data = {"disks_selected_config": [{"id": configure_host['installation_disk'], "role": "install"}]}
                                 responsepatch = session.patch(
-                                    "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                    api_endpoint + "/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
                                     headers=headers,
                                     json=data
                                 )
@@ -172,7 +179,7 @@ def run_module():
                         if "newname" in configure_host:
                                 data = {"host_name": config_host["newname"]}
                                 responsepatch = session.patch(
-                                    "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                    api_endpoint + "/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
                                     headers=headers,
                                     json=data
                                 )

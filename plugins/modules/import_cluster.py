@@ -35,6 +35,11 @@ options:
     openshift_cluster_id:
         description: Cluster ID of the cluster to be imported
         required: true
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 author:
     - Alberto Gonzalez (@agonzalezrh)
 '''  # noqa
@@ -63,6 +68,7 @@ def run_module():
         offline_token=dict(type='str', required=True),
         api_vip_dnsname=dict(type='str', required=True),
         openshift_cluster_id=dict(type='str', required=True),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
     session = requests.Session()
@@ -106,9 +112,10 @@ def run_module():
     params = module.params.copy()
     params.pop("cluster_name")
     params.pop("offline_token")
+    api_endpoint = params.pop("api_endpoint")
     params["name"] = module.params["cluster_name"]
     response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/import",
+        api_endpoint + "/api/assisted-install/v2/clusters/import",
         headers=headers,
         json=params
     )

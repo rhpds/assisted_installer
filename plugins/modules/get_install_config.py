@@ -30,6 +30,11 @@ options:
         description: Offline token from console.redhat.com
         required: true
         type: str
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
 
 author:
     - Alberto Gonzalez (@agonzalezrh)
@@ -56,6 +61,7 @@ def run_module():
     module_args = dict(
         cluster_id=dict(type='str', required=True),
         offline_token=dict(type='str', required=True),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
     session = requests.Session()
@@ -89,7 +95,7 @@ def run_module():
         "Content-Type": "application/json"
     }
     response = session.get(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/install-config",
+        module.params['api_endpoint'] + "/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/install-config",
         headers=headers,
     )
     if "code" in response.json():
