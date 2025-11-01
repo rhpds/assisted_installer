@@ -126,8 +126,8 @@ def run_module():
         headers=headers,
         params=params
     )
-    if "code" in response:
-        module.fail_json(msg='Request failed: ' + response)
+    if "code" in response.json():
+        module.fail_json(msg='Request failed: ', **response.json())
 
     try:
         currentcontent = None

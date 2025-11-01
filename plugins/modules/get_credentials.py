@@ -99,7 +99,7 @@ def run_module():
         headers=headers,
     )
     if "code" in response.json():
-        module.fail_json(msg='Request failed: ' + response)
+        module.fail_json(msg='Request failed: ', **response.json())
     else:
         result['result'] = response.json()
 
