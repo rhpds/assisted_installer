@@ -110,7 +110,7 @@ def run_module():
         headers=headers,
         params=params
     )
-    if "code" in response.json():
+    if response.status_code != 200:
         module.fail_json(msg='Request failed: ', **response.json())
 
     try:
