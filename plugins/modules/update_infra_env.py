@@ -1,0 +1,125 @@
+#!/usr/bin/python
+
+# Copyright: (c) 2023, Alberto Gonzalez <alberto.gonzalez@redhat.com>
+# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+import requests
+import json
+
+from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
+
+
+DOCUMENTATION = r'''
+---
+module: update_infra_env
+
+short_description: Updates an infra-env.
+
+version_added: "1.0.0"
+
+description: Updates an infra-env.
+
+options:
+    infra_env_id:
+        description: ID of the cluster
+        required: true
+        type: str
+
+    offline_token:
+        description: Offline token from console.redhat.com
+        required: true
+        type: str
+
+    infra_env_update_params:
+        description: The properties to update. (string with json)
+        required: true
+        type: str
+
+    api_endpoint:
+        description: API endpoint URL
+        required: false
+        type: str
+        default: https://api.openshift.com
+
+author:
+    - Alberto Gonzalez (@agonzalezrh)
+'''
+
+EXAMPLES = r'''
+- name: Updates an Infra Env
+  register: r_update_infra_env
+  rhpds.assisted_installer.update_infra_env:
+    infra_env_id: "{{ newcluster.result.id }}"
+    offline_token: "{{ offline_token }}"
+    infra_env_update_params: '{"imag_type":"full-iso"}'
+'''
+
+RETURN = r'''
+result:
+    description: Result from the API call
+    type: dict
+    returned: always
+'''
+
+
+def run_module():
+    # define available arguments/parameters a user can pass to the module
+    module_args = dict(
+        infra_env_id=dict(type='str', required=True),
+        offline_token=dict(type='str', required=True),
+        infra_env_update_params=dict(type='str', required=True),
+        api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
+    )
+
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(max_retries=5)
+    session.mount('https://', adapter)
+
+    # seed the result dict in the object
+    # we primarily care about changed and state
+    # changed is if this module effectively modified the target
+    # state will include any data that you want your module to pass back
+    # for consumption, for example, in a subsequent task
+    result = dict(
+        changed=False,
+    )
+
+    # the AnsibleModule object will be our abstraction working with Ansible
+    # this includes instantiation, a couple of common attr would be the
+    # args/params passed to the execution, as well as if the module
+    # supports check mode
+    module = AnsibleModule(
+        argument_spec=module_args,
+        supports_check_mode=True
+    )
+    response = access_token._get_access_token(module.params['offline_token'])
+    if response.status_code != 200:
+        module.fail_json(msg='Error getting access token ', **response.json())
+    result['access_token'] = response.json()["access_token"]
+
+    headers = {
+        "Authorization": "Bearer " + response.json()["access_token"],
+        "Content-Type": "application/json",
+        "Accept": "'application/json'"
+    }
+    response = session.patch(
+        module.params['api_endpoint'] + "/api/assisted-install/v2/infra-env/" + module.params['infra_env_id'],
+        headers=headers,
+        data=module.params["infra_env_update_params"]
+    )
+    if "Error" in str(response.content):
+        module.fail_json(msg='Request failed: ' + str(response.content))
+    else:
+        result['result'] = str(response.content)
+
+    # simple AnsibleModule.exit_json(), passing the key/value results
+    module.exit_json(**result)
+
+
+def main():
+    run_module()
+
+if __name__ == '__main__':
+    main()
