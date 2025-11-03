@@ -36,6 +36,7 @@ options:
         description: Install config overrides (string with json)
         required: true
         type: str
+
     api_endpoint:
         description: API endpoint URL
         required: false
@@ -67,7 +68,7 @@ def run_module():
     # define available arguments/parameters a user can pass to the module
     module_args = dict(
         cluster_id=dict(type='str', required=True),
-        offline_token=dict(type='str', required=True),
+        offline_token=dict(type='str', required=False),
         install_config_params=dict(type='str', required=True),
         api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
@@ -93,16 +94,20 @@ def run_module():
         argument_spec=module_args,
         supports_check_mode=True
     )
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
-    result['access_token'] = response.json()["access_token"]
 
-    headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
-        "Content-Type": "application/json",
-        "Accept": "'application/json'"
-    }
+    # Require offline_token only when using Red Hat's endpoint
+    api_endpoint = module.params.get('api_endpoint', 'https://api.openshift.com')
+    if api_endpoint == 'https://api.openshift.com' and not module.params.get('offline_token'):
+        module.fail_json(msg='offline_token is required when using https://api.openshift.com')
+
+    # Get access token only for Red Hat endpoint
+    headers = {"Content-Type": "application/json", "Accept": "'application/json'"}
+    if api_endpoint == 'https://api.openshift.com':
+        response = access_token._get_access_token(module.params['offline_token'])
+        if response.status_code != 200:
+            module.fail_json(msg='Error getting access token ', **response.json())
+        result['access_token'] = response.json()["access_token"]
+        headers["Authorization"] = "Bearer " + response.json()["access_token"]
     response = session.patch(
         module.params['api_endpoint'] + "/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/install-config",
         headers=headers,

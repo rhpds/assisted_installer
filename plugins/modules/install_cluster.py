@@ -72,7 +72,7 @@ def run_module():
     # define available arguments/parameters a user can pass to the module
     module_args = dict(
         cluster_id=dict(type='str', required=True),
-        offline_token=dict(type='str', required=True),
+        offline_token=dict(type='str', required=False),
         wait_timeout=dict(type='int', required=False, default=1800),
         delay=dict(type='int', required=False, default=60),
         api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
@@ -99,14 +99,20 @@ def run_module():
         argument_spec=module_args,
         supports_check_mode=True
     )
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
-    headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
-        "Content-Type": "application/json"
-    }
-    api_endpoint = module.params['api_endpoint']
+
+    # Require offline_token only when using Red Hat's endpoint
+    api_endpoint = module.params.get('api_endpoint', 'https://api.openshift.com')
+    if api_endpoint == 'https://api.openshift.com' and not module.params.get('offline_token'):
+        module.fail_json(msg='offline_token is required when using https://api.openshift.com')
+
+    # Get access token only for Red Hat endpoint
+    headers = {"Content-Type": "application/json"}
+    if api_endpoint == 'https://api.openshift.com':
+        response = access_token._get_access_token(module.params['offline_token'])
+        if response.status_code != 200:
+            module.fail_json(msg='Error getting access token ', **response.json())
+        headers["Authorization"] = "Bearer " + response.json()["access_token"]
+
     response = session.post(
         api_endpoint + "/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/actions/install",
         headers=headers,
@@ -119,24 +125,20 @@ def run_module():
     max_retries = module.params['wait_timeout'] / module.params['delay']
 
     while retries < max_retries and cluster_installed is False:
-        response = access_token._get_access_token(module.params['offline_token'])
-        if response.status_code != 200:
-            module.fail_json(msg='Error getting access token ', **response.json())
+        # Get access token only for Red Hat endpoint
+        headers = {"Content-Type": "application/json"}
+        if api_endpoint == 'https://api.openshift.com':
+            response = access_token._get_access_token(module.params['offline_token'])
+            if response.status_code != 200:
+                module.fail_json(msg='Error getting access token ', **response.json())
+            result['access_token'] = response.json()["access_token"]
+            headers["Authorization"] = "Bearer " + response.json()["access_token"]
 
         # if the user is working with this module in only check mode we do not
         # want to make any changes to the environment, just return the current
         # state with no modifications
         if module.check_mode:
             module.exit_json(**result)
-
-        # manipulate or modify the state as needed (this is going to be the
-        # part where your module will do what it needs to do)
-        result['access_token'] = response.json()["access_token"]
-
-        headers = {
-            "Authorization": "Bearer " + response.json()["access_token"],
-            "Content-Type": "application/json"
-        }
         response = session.get(
             api_endpoint + "/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
             headers=headers,

@@ -85,7 +85,7 @@ def run_module():
         ams_subscription_ids=dict(type='list', required=False),
         with_hosts=dict(type='bool', required=False),
         owner=dict(type='str', required=False),
-        offline_token=dict(type='str', required=True),
+        offline_token=dict(type='str', required=False),
         api_endpoint=dict(type='str', required=False, default='https://api.openshift.com')
     )
 
@@ -111,9 +111,18 @@ def run_module():
         supports_check_mode=True,
     )
 
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
+    # Require offline_token only when using Red Hat's endpoint
+    api_endpoint = module.params.get('api_endpoint', 'https://api.openshift.com')
+    if api_endpoint == 'https://api.openshift.com' and not module.params.get('offline_token'):
+        module.fail_json(msg='offline_token is required when using https://api.openshift.com')
+
+    # Get access token only for Red Hat endpoint
+    headers = {"Content-Type": "application/json"}
+    if api_endpoint == 'https://api.openshift.com':
+        response = access_token._get_access_token(module.params['offline_token'])
+        if response.status_code != 200:
+            module.fail_json(msg='Error getting access token ', **response.json())
+        headers["Authorization"] = "Bearer " + response.json()["access_token"]
 
     # if the user is working with this module in only check mode we do not
     # want to make any changes to the environment, just return the current
@@ -121,13 +130,11 @@ def run_module():
     if module.check_mode:
         module.exit_json(**result)
 
-    headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
-        "Content-Type": "application/json"
-    }
     params = module.params.copy()
-    params.pop("offline_token")
-    api_endpoint = params.pop("api_endpoint")
+    if "offline_token" in params:
+        params.pop("offline_token")
+    if "api_endpoint" in params:
+        params.pop("api_endpoint")
     response = session.get(
         api_endpoint + "/api/assisted-install/v2/clusters",
         headers=headers,
