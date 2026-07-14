@@ -4,6 +4,7 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
+import json
 import requests
 import time
 
@@ -108,10 +109,17 @@ def run_module():
     retries = 0
     cluster_ready = False
     max_retries = module.params['wait_timeout'] / module.params['delay']
+    last_json_error = None
+    cluster_data = None
     while retries < max_retries and cluster_ready is False:
+        retries += 1
         response = access_token._get_access_token(module.params['offline_token'])
         if response.status_code != 200:
-            module.fail_json(msg='Error getting access token ', **response.json())
+            try:
+                error_data = response.json()
+            except (json.JSONDecodeError, requests.exceptions.JSONDecodeError):
+                error_data = {"detail": "Access token request failed with status %d and non-JSON response" % response.status_code}
+            module.fail_json(msg='Error getting access token ', **error_data)
 
         # if the user is working with this module in only check mode we do not
         # want to make any changes to the environment, just return the current
@@ -119,32 +127,52 @@ def run_module():
         if module.check_mode:
             module.exit_json(**result)
 
+        try:
+            token_data = response.json()
+        except (json.JSONDecodeError, requests.exceptions.JSONDecodeError) as e:
+            module.warn("Failed to decode access token response (attempt %d/%d): %s" % (retries, int(max_retries), str(e)))
+            time.sleep(module.params['delay'])
+            continue
+
         # manipulate or modify the state as needed (this is going to be the
         # part where your module will do what it needs to do)
-        result['access_token'] = response.json()["access_token"]
+        result['access_token'] = token_data["access_token"]
 
         headers = {
-            "Authorization": "Bearer " + response.json()["access_token"],
+            "Authorization": "Bearer " + token_data["access_token"],
             "Content-Type": "application/json"
         }
         response = session.get(
             "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
             headers=headers,
         )
-        if "code" in response.json():
-            module.fail_json(msg='Request failed: ', **response.json())
+
+        try:
+            cluster_data = response.json()
+        except (json.JSONDecodeError, requests.exceptions.JSONDecodeError) as e:
+            last_json_error = str(e)
+            module.warn("Failed to decode cluster API response (attempt %d/%d): %s" % (retries, int(max_retries), last_json_error))
+            time.sleep(module.params['delay'])
+            continue
+
+        if "code" in cluster_data:
+            module.fail_json(msg='Request failed: ', **cluster_data)
         ready_hosts = 0
         added_hosts = 0
-        for host in response.json()['hosts']:
+        for host in cluster_data['hosts']:
             if host['status'] == "known":
                 ready_hosts = ready_hosts + 1
-                if response.json()['status'] == 'adding-hosts':
+                if cluster_data['status'] == 'adding-hosts':
                     responsepost = session.post(
                         "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'] + "/actions/install",
                         headers=headers
                     )
-                    if "code" in responsepost.json():
-                        module.fail_json(msg='Request failed: ', **responsepatch.json())
+                    try:
+                        post_data = responsepost.json()
+                    except (json.JSONDecodeError, requests.exceptions.JSONDecodeError):
+                        post_data = {}
+                    if "code" in post_data:
+                        module.fail_json(msg='Request failed: ', **post_data)
             if host['status'] == 'added-to-existing-cluster':
                 added_hosts = added_hosts + 1
             if 'configure_hosts' in module.params and module.params['configure_hosts'] is not None:
@@ -157,8 +185,12 @@ def run_module():
                                 headers=headers,
                                 json=data
                             )
-                            if "code" in responsepatch.json():
-                                module.fail_json(msg='Request failed: ', **responsepatch.json())
+                            try:
+                                patch_data = responsepatch.json()
+                            except (json.JSONDecodeError, requests.exceptions.JSONDecodeError):
+                                patch_data = {}
+                            if "code" in patch_data:
+                                module.fail_json(msg='Request failed: ', **patch_data)
                         if "installation_disk" in configure_host:
                             if host['installation_disk_path'] != configure_host['installation_disk']:
                                 data = {"disks_selected_config": [{"id": configure_host['installation_disk'], "role": "install"}]}
@@ -167,8 +199,12 @@ def run_module():
                                     headers=headers,
                                     json=data
                                 )
-                                if "code" in responsepatch.json():
-                                    module.fail_json(msg='Request failed: ', **responsepatch.json())
+                                try:
+                                    patch_data = responsepatch.json()
+                                except (json.JSONDecodeError, requests.exceptions.JSONDecodeError):
+                                    patch_data = {}
+                                if "code" in patch_data:
+                                    module.fail_json(msg='Request failed: ', **patch_data)
                         if "newname" in configure_host:
                                 data = {"host_name": config_host["newname"]}
                                 responsepatch = session.patch(
@@ -176,19 +212,26 @@ def run_module():
                                     headers=headers,
                                     json=data
                                 )
-                                if "code" in responsepatch.json():
-                                    module.fail_json(msg='Request failed: ', **responsepatch.json())                        
+                                try:
+                                    patch_data = responsepatch.json()
+                                except (json.JSONDecodeError, requests.exceptions.JSONDecodeError):
+                                    patch_data = {}
+                                if "code" in patch_data:
+                                    module.fail_json(msg='Request failed: ', **patch_data)
 
-            if ready_hosts == module.params['expected_hosts'] and response.json()['status'] == "ready":
+            if ready_hosts == module.params['expected_hosts'] and cluster_data['status'] == "ready":
                 cluster_ready = True
-                result['result'] = response.json()
-            elif added_hosts == module.params['expected_hosts'] and response.json()['status'] == "adding-hosts":
+                result['result'] = cluster_data
+            elif added_hosts == module.params['expected_hosts'] and cluster_data['status'] == "adding-hosts":
                 cluster_ready = True
-                result['result'] = response.json()
+                result['result'] = cluster_data
             else:
                 time.sleep(module.params['delay'])
 
-    result['result'] = response.json()
+    if cluster_data is not None:
+        result['result'] = cluster_data
+    elif last_json_error is not None:
+        module.fail_json(msg='Timed out waiting for hosts. Last error: non-JSON API response: %s' % last_json_error)
 
     # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results
