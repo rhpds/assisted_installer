@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 
 
 def _load_access_token():
