@@ -4,7 +4,6 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
-import requests
 import time
 
 from ansible.module_utils.basic import AnsibleModule
@@ -62,6 +61,45 @@ result:
 
 '''
 
+ASSISTED_INSTALLER_API = "https://api.openshift.com/api/assisted-install/v2"
+
+# Red Hat SSO access tokens are typically valid for several minutes. Refresh
+# a bit before actual expiry (clock skew / a slow round-trip) instead of
+# calling the token endpoint on every single polling iteration - this both
+# reduces load on sso.redhat.com and reduces how often we are exposed to any
+# transient errors it returns.
+TOKEN_REFRESH_SKEW_SECONDS = 60
+DEFAULT_TOKEN_LIFETIME_SECONDS = 300
+
+
+class AccessTokenCache:
+    """Caches an SSO access token for the duration of a single module run,
+    only refreshing it once it is close to expiring instead of on every
+    polling iteration."""
+
+    def __init__(self, module, offline_token):
+        self._module = module
+        self._offline_token = offline_token
+        self._token = None
+        self._expires_at = 0.0
+
+    def get(self):
+        if self._token is None or time.monotonic() >= self._expires_at:
+            self._refresh()
+        return self._token
+
+    def _refresh(self):
+        response, data = access_token.get_access_token_data(self._offline_token)
+        if response.status_code != 200 or "access_token" not in data:
+            self._module.fail_json(msg='Error getting access token ', **data)
+        self._token = data["access_token"]
+        expires_in = data.get("expires_in", DEFAULT_TOKEN_LIFETIME_SECONDS)
+        try:
+            expires_in = int(expires_in)
+        except (TypeError, ValueError):
+            expires_in = DEFAULT_TOKEN_LIFETIME_SECONDS
+        self._expires_at = time.monotonic() + max(expires_in - TOKEN_REFRESH_SKEW_SECONDS, 0)
+
 
 def run_module():
     # define available arguments/parameters a user can pass to the module
@@ -72,9 +110,7 @@ def run_module():
         delay=dict(type='int', required=False, default=60),
     )
 
-    session = requests.Session()
-    adapter = requests.adapters.HTTPAdapter(max_retries=5)
-    session.mount('https://', adapter)
+    session = access_token._get_session()
 
     # seed the result dict in the object
     # we primarily care about changed and state
@@ -93,29 +129,28 @@ def run_module():
         argument_spec=module_args,
         supports_check_mode=True
     )
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
-    headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
-        "Content-Type": "application/json"
-    }
+
+    token_cache = AccessTokenCache(module, module.params['offline_token'])
+
+    def auth_headers():
+        return {
+            "Authorization": "Bearer " + token_cache.get(),
+            "Content-Type": "application/json"
+        }
+
     response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/actions/install",
-        headers=headers,
+        ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'] + "/actions/install",
+        headers=auth_headers(),
     )
-    if "code" in response.json():
-        module.fail_json(msg='ERROR: ', **response.json())
+    data = access_token.safe_json(response)
+    if "code" in data:
+        module.fail_json(msg='ERROR: ', **data)
 
     retries = 0
     cluster_installed = False
     max_retries = module.params['wait_timeout'] / module.params['delay']
 
     while retries < max_retries and cluster_installed is False:
-        response = access_token._get_access_token(module.params['offline_token'])
-        if response.status_code != 200:
-            module.fail_json(msg='Error getting access token ', **response.json())
-
         # if the user is working with this module in only check mode we do not
         # want to make any changes to the environment, just return the current
         # state with no modifications
@@ -124,29 +159,27 @@ def run_module():
 
         # manipulate or modify the state as needed (this is going to be the
         # part where your module will do what it needs to do)
-        result['access_token'] = response.json()["access_token"]
+        result['access_token'] = token_cache.get()
 
-        headers = {
-            "Authorization": "Bearer " + response.json()["access_token"],
-            "Content-Type": "application/json"
-        }
         response = session.get(
-            "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
-            headers=headers,
+            ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'],
+            headers=auth_headers(),
         )
-        if "code" in response.json():
-            module.fail_json(msg='ERROR: ', **response.json())
-        if response.json()['status'] == "installed":
+        data = access_token.safe_json(response)
+        if "code" in data:
+            module.fail_json(msg='ERROR: ', **data)
+        if data.get('status') == "installed":
             cluster_installed = True
-            result['result'] = response.json()
-        elif response.json()['status'] == "ready":
+            result['result'] = data
+        elif data.get('status') == "ready":
             # Retry start installation if the cluster was moved to ready again
             response = session.post(
-                "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'] + "/actions/install",
-                headers=headers,
+                ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'] + "/actions/install",
+                headers=auth_headers(),
             )
-            if "code" in response.json():
-                module.fail_json(msg='ERROR: ', **response.json())
+            data = access_token.safe_json(response)
+            if "code" in data:
+                module.fail_json(msg='ERROR: ', **data)
         else:
             time.sleep(module.params['delay'])
 
