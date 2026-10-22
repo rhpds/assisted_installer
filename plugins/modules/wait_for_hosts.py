@@ -6,6 +6,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 import time
 
+import requests
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
@@ -124,55 +125,51 @@ def run_module():
     cluster_ready = False
     data = {}
     max_retries = module.params['wait_timeout'] / module.params['delay']
-    while retries < max_retries and cluster_ready is False:
-        # if the user is working with this module in only check mode we do not
-        # want to make any changes to the environment, just return the current
-        # state with no modifications
-        if module.check_mode:
-            module.exit_json(**result)
+    # Connection-level failures (DNS, reset, timeout) still raise after the
+    # shared session's retries are exhausted, regardless of
+    # raise_on_status - requests surfaces those as RequestException
+    # subclasses (ConnectionError, Timeout, RetryError, ...). Catch them
+    # here so a sustained outage/network issue produces a clean module
+    # failure instead of an unhandled traceback.
+    try:
+        while retries < max_retries and cluster_ready is False:
+            # if the user is working with this module in only check mode we do not
+            # want to make any changes to the environment, just return the current
+            # state with no modifications
+            if module.check_mode:
+                module.exit_json(**result)
 
-        # manipulate or modify the state as needed (this is going to be the
-        # part where your module will do what it needs to do)
-        result['access_token'] = token_cache.get()
+            # manipulate or modify the state as needed (this is going to be the
+            # part where your module will do what it needs to do)
+            result['access_token'] = token_cache.get()
 
-        response = session.get(
-            ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'],
-            headers=auth_headers(),
-        )
-        data = access_token.safe_json(response)
-        if "code" in data or "http_status" in data:
-            module.fail_json(msg='Request failed: ', **data)
-        ready_hosts = 0
-        added_hosts = 0
-        for host in data['hosts']:
-            if host['status'] == "known":
-                ready_hosts = ready_hosts + 1
-                if data['status'] == 'adding-hosts':
-                    responsepost = session.post(
-                        ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'] + "/actions/install",
-                        headers=auth_headers()
-                    )
-                    post_data = access_token.safe_json(responsepost)
-                    if "code" in post_data or "http_status" in post_data:
-                        module.fail_json(msg='Request failed: ', **post_data)
-            if host['status'] == 'added-to-existing-cluster':
-                added_hosts = added_hosts + 1
-            if 'configure_hosts' in module.params and module.params['configure_hosts'] is not None:
-                for configure_host in module.params['configure_hosts']:
-                    if host['requested_hostname'] == configure_host['hostname']:
-                        if host['role'] != configure_host['role']:
-                            patch_body = {"host_role": configure_host['role']}
-                            responsepatch = session.patch(
-                                ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
-                                headers=auth_headers(),
-                                json=patch_body
-                            )
-                            patch_data = access_token.safe_json(responsepatch)
-                            if "code" in patch_data or "http_status" in patch_data:
-                                module.fail_json(msg='Request failed: ', **patch_data)
-                        if "installation_disk" in configure_host:
-                            if host['installation_disk_path'] != configure_host['installation_disk']:
-                                patch_body = {"disks_selected_config": [{"id": configure_host['installation_disk'], "role": "install"}]}
+            response = session.get(
+                ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'],
+                headers=auth_headers(),
+            )
+            data = access_token.safe_json(response)
+            if "code" in data or "http_status" in data:
+                module.fail_json(msg='Request failed: ', **data)
+            ready_hosts = 0
+            added_hosts = 0
+            for host in data['hosts']:
+                if host['status'] == "known":
+                    ready_hosts = ready_hosts + 1
+                    if data['status'] == 'adding-hosts':
+                        responsepost = session.post(
+                            ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'] + "/actions/install",
+                            headers=auth_headers()
+                        )
+                        post_data = access_token.safe_json(responsepost)
+                        if "code" in post_data or "http_status" in post_data:
+                            module.fail_json(msg='Request failed: ', **post_data)
+                if host['status'] == 'added-to-existing-cluster':
+                    added_hosts = added_hosts + 1
+                if 'configure_hosts' in module.params and module.params['configure_hosts'] is not None:
+                    for configure_host in module.params['configure_hosts']:
+                        if host['requested_hostname'] == configure_host['hostname']:
+                            if host['role'] != configure_host['role']:
+                                patch_body = {"host_role": configure_host['role']}
                                 responsepatch = session.patch(
                                     ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
                                     headers=auth_headers(),
@@ -181,32 +178,45 @@ def run_module():
                                 patch_data = access_token.safe_json(responsepatch)
                                 if "code" in patch_data or "http_status" in patch_data:
                                     module.fail_json(msg='Request failed: ', **patch_data)
-                        if "newname" in configure_host:
-                            patch_body = {"host_name": configure_host["newname"]}
-                            responsepatch = session.patch(
-                                ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
-                                headers=auth_headers(),
-                                json=patch_body
-                            )
-                            patch_data = access_token.safe_json(responsepatch)
-                            if "code" in patch_data or "http_status" in patch_data:
-                                module.fail_json(msg='Request failed: ', **patch_data)
+                            if "installation_disk" in configure_host:
+                                if host['installation_disk_path'] != configure_host['installation_disk']:
+                                    patch_body = {"disks_selected_config": [{"id": configure_host['installation_disk'], "role": "install"}]}
+                                    responsepatch = session.patch(
+                                        ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                        headers=auth_headers(),
+                                        json=patch_body
+                                    )
+                                    patch_data = access_token.safe_json(responsepatch)
+                                    if "code" in patch_data or "http_status" in patch_data:
+                                        module.fail_json(msg='Request failed: ', **patch_data)
+                            if "newname" in configure_host:
+                                patch_body = {"host_name": configure_host["newname"]}
+                                responsepatch = session.patch(
+                                    ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                    headers=auth_headers(),
+                                    json=patch_body
+                                )
+                                patch_data = access_token.safe_json(responsepatch)
+                                if "code" in patch_data or "http_status" in patch_data:
+                                    module.fail_json(msg='Request failed: ', **patch_data)
 
-        # Evaluate readiness once per poll, after all hosts in this response
-        # have been processed - not once per host. (This used to be nested
-        # inside the `for host in data['hosts']:` loop above, which judged
-        # readiness against a partial, still-accumulating per-host tally and
-        # could call time.sleep() multiple times in a single poll whenever
-        # there was more than one host.)
-        if ready_hosts == module.params['expected_hosts'] and data['status'] == "ready":
-            cluster_ready = True
-            result['result'] = data
-        elif added_hosts == module.params['expected_hosts'] and data['status'] == "adding-hosts":
-            cluster_ready = True
-            result['result'] = data
-        else:
-            time.sleep(module.params['delay'])
-        retries += 1
+            # Evaluate readiness once per poll, after all hosts in this response
+            # have been processed - not once per host. (This used to be nested
+            # inside the `for host in data['hosts']:` loop above, which judged
+            # readiness against a partial, still-accumulating per-host tally and
+            # could call time.sleep() multiple times in a single poll whenever
+            # there was more than one host.)
+            if ready_hosts == module.params['expected_hosts'] and data['status'] == "ready":
+                cluster_ready = True
+                result['result'] = data
+            elif added_hosts == module.params['expected_hosts'] and data['status'] == "adding-hosts":
+                cluster_ready = True
+                result['result'] = data
+            else:
+                time.sleep(module.params['delay'])
+            retries += 1
+    except requests.exceptions.RequestException as e:
+        module.fail_json(msg='Request failed: {0}'.format(e))
 
     result['result'] = data
 

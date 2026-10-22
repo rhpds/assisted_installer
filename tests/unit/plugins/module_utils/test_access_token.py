@@ -105,3 +105,40 @@ class TestRetryConfiguration:
             assert access_token._RETRY._is_method_retryable(method), (
                 f"{method} must be retryable on the shared session"
             )
+
+    def test_retry_does_not_raise_on_exhausted_status_retries(self):
+        # With the default raise_on_status=True, urllib3 raises MaxRetryError
+        # (which requests turns into RetryError) once retries on a
+        # status_forcelist code are exhausted, so safe_json() never runs
+        # during a sustained outage. raise_on_status=False must be set so
+        # the final response is returned instead and safe_json()/the
+        # http_status guard can report it as a clean module failure.
+        assert access_token._RETRY.raise_on_status is False
+
+    def test_retry_safe_also_does_not_raise_on_exhausted_status_retries(self):
+        assert access_token._RETRY_SAFE.raise_on_status is False
+
+    def test_retry_safe_excludes_post_and_patch(self):
+        # _RETRY_SAFE is used for non-idempotent calls (e.g. POST /clusters)
+        # where retrying after a transient 5xx risks double-applying the
+        # operation server-side. POST/PATCH must not be status-retried.
+        for method in ("POST", "PATCH"):
+            assert not access_token._RETRY_SAFE._is_method_retryable(method), (
+                f"{method} must not be status-retried on the non-idempotent-safe session"
+            )
+
+    def test_retry_safe_still_covers_get_and_other_idempotent_methods(self):
+        for method in ("GET", "HEAD", "PUT", "DELETE", "OPTIONS", "TRACE"):
+            assert access_token._RETRY_SAFE._is_method_retryable(method), (
+                f"{method} must still be retryable on the non-idempotent-safe session"
+            )
+
+    def test_get_session_defaults_to_the_standard_retry(self):
+        session = access_token._get_session()
+        adapter = session.get_adapter("https://example.com")
+        assert adapter.max_retries is access_token._RETRY
+
+    def test_get_session_with_retry_non_idempotent_false_uses_the_safe_retry(self):
+        session = access_token._get_session(retry_non_idempotent=False)
+        adapter = session.get_adapter("https://example.com")
+        assert adapter.max_retries is access_token._RETRY_SAFE

@@ -17,6 +17,7 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 pytest.importorskip("ansible", reason="ansible-core is required to import list_clusters.py")
 
@@ -63,8 +64,8 @@ DEFAULT_PARAMS = dict(
 )
 
 
-def _run(monkeypatch, token_response, get_response=None):
-    module = FakeModule(dict(DEFAULT_PARAMS))
+def _run(monkeypatch, token_response, get_response=None, params=None):
+    module = FakeModule(dict(DEFAULT_PARAMS, **(params or {})))
     monkeypatch.setattr(list_clusters, "AnsibleModule", lambda *a, **kw: module)
     monkeypatch.setattr(
         list_clusters.access_token, "_get_access_token", lambda offline_token: token_response
@@ -131,3 +132,51 @@ class TestListClusters:
 
         assert not session.get.called
         assert module.exit_json_calls
+
+    def test_owner_true_is_sent_as_lowercase_string(self, monkeypatch):
+        # owner is type='bool', so Ansible coerces a YAML `owner: true` to
+        # the Python bool True (as it would be in module.params here).
+        # requests would otherwise serialize that as the query string
+        # "True" (str(True)), which the real API treats as an unrecognized
+        # value and silently returns zero clusters instead of filtering -
+        # it must be normalized to the lowercase "true" the API expects.
+        token_response = _mock_response(200, json_value={"access_token": "tok-1"})
+        get_response = _mock_response(200, json_value=[{"id": "cluster-1"}])
+        module, session = _run(monkeypatch, token_response, get_response, params={"owner": True})
+
+        with pytest.raises(SystemExit):
+            list_clusters.run_module()
+
+        assert session.get.called
+        _, kwargs = session.get.call_args
+        assert kwargs["params"]["owner"] == "true"
+
+    def test_owner_not_provided_is_omitted_from_params(self, monkeypatch):
+        # owner stays None (not normalized) when not provided - requests
+        # already omits any None-valued key from the actual query string,
+        # so the API call is unaffected and gets the full, unfiltered list.
+        token_response = _mock_response(200, json_value={"access_token": "tok-1"})
+        get_response = _mock_response(200, json_value=[{"id": "cluster-1"}])
+        module, session = _run(monkeypatch, token_response, get_response, params={"owner": None})
+
+        with pytest.raises(SystemExit):
+            list_clusters.run_module()
+
+        assert session.get.called
+        _, kwargs = session.get.call_args
+        assert kwargs["params"]["owner"] is None
+
+    def test_fails_cleanly_on_connection_error(self, monkeypatch):
+        # A connection-level failure (DNS, reset, timeout) still raises
+        # after the shared session's retries are exhausted, regardless of
+        # raise_on_status - this must produce a clean fail_json, not an
+        # unhandled traceback.
+        token_response = _mock_response(200, json_value={"access_token": "tok-1"})
+        module, session = _run(monkeypatch, token_response)
+        session.get.side_effect = requests.exceptions.ConnectionError("boom")
+
+        with pytest.raises(SystemExit):
+            list_clusters.run_module()
+
+        assert module.fail_json_calls
+        assert "boom" in module.fail_json_calls[0]["msg"]

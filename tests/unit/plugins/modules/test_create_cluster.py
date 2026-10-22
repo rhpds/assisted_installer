@@ -16,6 +16,7 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 pytest.importorskip("ansible", reason="ansible-core is required to import create_cluster.py")
 
@@ -96,9 +97,10 @@ def _run(monkeypatch, token_response, post_response=None):
     session = MagicMock()
     if post_response is not None:
         session.post.return_value = post_response
-    monkeypatch.setattr(create_cluster.access_token, "_get_session", lambda: session)
+    get_session = MagicMock(return_value=session)
+    monkeypatch.setattr(create_cluster.access_token, "_get_session", get_session)
 
-    return module, session
+    return module, session, get_session
 
 
 class TestCreateCluster:
@@ -108,7 +110,7 @@ class TestCreateCluster:
         token_response = _mock_response(
             502, json_error=ValueError("Expecting value: line 1 column 1 (char 0)"), text=""
         )
-        module, _session = _run(monkeypatch, token_response)
+        module, _session, _get_session = _run(monkeypatch, token_response)
 
         with pytest.raises(SystemExit):
             create_cluster.run_module()
@@ -123,7 +125,7 @@ class TestCreateCluster:
         post_response = _mock_response(
             503, json_error=ValueError("boom"), text="<html>Service Unavailable</html>"
         )
-        module, session = _run(monkeypatch, token_response, post_response)
+        module, session, _get_session = _run(monkeypatch, token_response, post_response)
 
         with pytest.raises(SystemExit):
             create_cluster.run_module()
@@ -135,7 +137,7 @@ class TestCreateCluster:
     def test_succeeds_on_valid_response(self, monkeypatch):
         token_response = _mock_response(200, json_value={"access_token": "tok-1"})
         post_response = _mock_response(200, json_value={"id": "new-cluster-id"})
-        module, session = _run(monkeypatch, token_response, post_response)
+        module, session, _get_session = _run(monkeypatch, token_response, post_response)
 
         with pytest.raises(SystemExit):
             create_cluster.run_module()
@@ -145,3 +147,33 @@ class TestCreateCluster:
         result = module.exit_json_calls[0]
         assert result["changed"] is True
         assert result["result"]["id"] == "new-cluster-id"
+
+    def test_uses_non_idempotent_safe_session_since_post_clusters_is_not_retried_on_status(self, monkeypatch):
+        # POST /clusters is not idempotent and the API does not enforce
+        # name uniqueness, so this call must use the session variant that
+        # does not status-retry POST (to avoid creating a duplicate
+        # cluster if a 502/504 arrives after the backend already committed
+        # the create).
+        token_response = _mock_response(200, json_value={"access_token": "tok-1"})
+        post_response = _mock_response(200, json_value={"id": "new-cluster-id"})
+        module, session, get_session = _run(monkeypatch, token_response, post_response)
+
+        with pytest.raises(SystemExit):
+            create_cluster.run_module()
+
+        get_session.assert_called_once_with(retry_non_idempotent=False)
+
+    def test_fails_cleanly_on_connection_error(self, monkeypatch):
+        # A connection-level failure (DNS, reset, timeout) still raises
+        # after the shared session's retries are exhausted, regardless of
+        # raise_on_status - this must produce a clean fail_json, not an
+        # unhandled traceback.
+        token_response = _mock_response(200, json_value={"access_token": "tok-1"})
+        module, session, _get_session = _run(monkeypatch, token_response)
+        session.post.side_effect = requests.exceptions.ConnectionError("boom")
+
+        with pytest.raises(SystemExit):
+            create_cluster.run_module()
+
+        assert module.fail_json_calls
+        assert "boom" in module.fail_json_calls[0]["msg"]

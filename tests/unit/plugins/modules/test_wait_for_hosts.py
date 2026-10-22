@@ -15,6 +15,7 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 pytest.importorskip("ansible", reason="ansible-core is required to import wait_for_hosts.py")
 
@@ -227,3 +228,17 @@ class TestWaitForHosts:
         assert not module.exit_json_calls, "a timeout must not be reported as success"
         assert module.fail_json_calls
         assert "Timed out" in module.fail_json_calls[0]["msg"]
+
+    def test_fails_cleanly_on_connection_error(self, monkeypatch):
+        # A connection-level failure (DNS, reset, timeout) still raises
+        # after the shared session's retries are exhausted, regardless of
+        # raise_on_status - this must produce a clean fail_json, not an
+        # unhandled traceback.
+        module, session, _sleep = _run(monkeypatch, {}, [])
+        session.get.side_effect = requests.exceptions.ConnectionError("boom")
+
+        with pytest.raises(SystemExit):
+            wait_for_hosts.run_module()
+
+        assert module.fail_json_calls
+        assert "boom" in module.fail_json_calls[0]["msg"]

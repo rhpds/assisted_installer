@@ -20,22 +20,58 @@ SSO_TOKEN_URL = "https://sso.redhat.com/auth/realms/redhat-external/protocol/ope
 # allowed_methods - passing allowed_methods as a plain set instead of
 # extending the default would otherwise silently *drop* GET/HEAD/etc.
 # from the retryable set rather than adding to it.
+#
+# raise_on_status=False: with the default (True), once retries are used up
+# on a status in status_forcelist, urllib3 raises MaxRetryError (which
+# requests turns into requests.exceptions.RetryError) instead of returning
+# the final response. During a sustained outage that means the caller gets
+# an unhandled traceback and safe_json() never runs - exactly the crash
+# class this module exists to prevent. With raise_on_status=False, urllib3
+# returns the final (failed) response instead, so safe_json()/the
+# "http_status" in data guard can report it as a clean module failure.
+# Connection-level failures (DNS, reset, timeout) still raise after
+# retries are exhausted regardless of this setting - callers should catch
+# requests.exceptions.RequestException around their HTTP calls.
 _RETRY = Retry(
     total=5,
     backoff_factor=1,
     status_forcelist=[429, 500, 502, 503, 504],
     allowed_methods=Retry.DEFAULT_ALLOWED_METHODS | frozenset({"POST", "PATCH"}),
+    raise_on_status=False,
+)
+
+# Used for calls where the HTTP verb is not idempotent and retrying a
+# timed-out/5xx request risks double-applying the operation (e.g. POST
+# /clusters, which has no uniqueness constraint on name and will happily
+# create a second cluster if retried after the first attempt already
+# succeeded server-side but the response was lost/delayed). This only
+# retries the methods urllib3 considers safe to retry by default
+# (GET/HEAD/PUT/DELETE/OPTIONS/TRACE) - POST and PATCH are deliberately
+# left out. Connection-level retries (the request never reached the
+# server) still happen for every method regardless of allowed_methods.
+_RETRY_SAFE = Retry(
+    total=5,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=Retry.DEFAULT_ALLOWED_METHODS,
+    raise_on_status=False,
 )
 
 
-def _get_session():
+def _get_session(retry_non_idempotent=True):
     """Build a requests.Session with retry/backoff for transient HTTP errors.
 
     Shared by every module in this collection so that both the SSO token
     endpoint and the Assisted Installer API get the same resilience.
+
+    Set retry_non_idempotent=False for calls where retrying a non-idempotent
+    method (POST/PATCH) after a transient status error risks double-applying
+    the operation server-side (e.g. POST /clusters). GET/HEAD/PUT/DELETE/
+    OPTIONS/TRACE are always retried on a transient status either way.
     """
     session = requests.Session()
-    session.mount("https://", HTTPAdapter(max_retries=_RETRY))
+    retry = _RETRY if retry_non_idempotent else _RETRY_SAFE
+    session.mount("https://", HTTPAdapter(max_retries=retry))
     return session
 
 

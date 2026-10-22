@@ -82,3 +82,12 @@ def load_list_clusters():
         "ansible_collections.rhpds.assisted_installer.plugins.modules.list_clusters",
         str(REPO_ROOT / "plugins" / "modules" / "list_clusters.py"),
     )
+
+
+def load_delete_cluster():
+    """Import plugins/modules/delete_cluster.py and return the module object."""
+    _register_collection_namespace()
+    return _load_from_path(
+        "ansible_collections.rhpds.assisted_installer.plugins.modules.delete_cluster",
+        str(REPO_ROOT / "plugins" / "modules" / "delete_cluster.py"),
+    )

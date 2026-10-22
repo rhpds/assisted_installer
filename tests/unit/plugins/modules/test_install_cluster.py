@@ -14,6 +14,7 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 pytest.importorskip("ansible", reason="ansible-core is required to import install_cluster.py")
 
@@ -214,3 +215,17 @@ class TestInstallClusterRunModule:
         assert session.post.call_count == 2
         assert module.fail_json_calls
         assert module.fail_json_calls[0]["http_status"] == 504
+
+    def test_fails_cleanly_on_connection_error(self, monkeypatch):
+        # A connection-level failure (DNS, reset, timeout) still raises
+        # after the shared session's retries are exhausted, regardless of
+        # raise_on_status - this must produce a clean fail_json, not an
+        # unhandled traceback.
+        module, session = _run_install_cluster(monkeypatch)
+        session.post.side_effect = requests.exceptions.ConnectionError("boom")
+
+        with pytest.raises(SystemExit):
+            install_cluster.run_module()
+
+        assert module.fail_json_calls
+        assert "boom" in module.fail_json_calls[0]["msg"]

@@ -6,6 +6,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 import time
 
+import requests
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
@@ -108,50 +109,59 @@ def run_module():
             "Content-Type": "application/json"
         }
 
-    response = session.post(
-        ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'] + "/actions/install",
-        headers=auth_headers(),
-    )
-    data = access_token.safe_json(response)
-    if "code" in data or "http_status" in data:
-        module.fail_json(msg='ERROR: ', **data)
-
-    retries = 0
-    cluster_installed = False
-    max_retries = module.params['wait_timeout'] / module.params['delay']
-
-    while retries < max_retries and cluster_installed is False:
-        # if the user is working with this module in only check mode we do not
-        # want to make any changes to the environment, just return the current
-        # state with no modifications
-        if module.check_mode:
-            module.exit_json(**result)
-
-        # manipulate or modify the state as needed (this is going to be the
-        # part where your module will do what it needs to do)
-        result['access_token'] = token_cache.get()
-
-        response = session.get(
-            ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'],
+    # Connection-level failures (DNS, reset, timeout) still raise after the
+    # shared session's retries are exhausted, regardless of
+    # raise_on_status - requests surfaces those as RequestException
+    # subclasses (ConnectionError, Timeout, RetryError, ...). Catch them
+    # here so a sustained outage/network issue produces a clean module
+    # failure instead of an unhandled traceback.
+    try:
+        response = session.post(
+            ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'] + "/actions/install",
             headers=auth_headers(),
         )
         data = access_token.safe_json(response)
         if "code" in data or "http_status" in data:
             module.fail_json(msg='ERROR: ', **data)
-        if data.get('status') == "installed":
-            cluster_installed = True
-            result['result'] = data
-        elif data.get('status') == "ready":
-            # Retry start installation if the cluster was moved to ready again
-            response = session.post(
-                ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'] + "/actions/install",
+
+        retries = 0
+        cluster_installed = False
+        max_retries = module.params['wait_timeout'] / module.params['delay']
+
+        while retries < max_retries and cluster_installed is False:
+            # if the user is working with this module in only check mode we do not
+            # want to make any changes to the environment, just return the current
+            # state with no modifications
+            if module.check_mode:
+                module.exit_json(**result)
+
+            # manipulate or modify the state as needed (this is going to be the
+            # part where your module will do what it needs to do)
+            result['access_token'] = token_cache.get()
+
+            response = session.get(
+                ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'],
                 headers=auth_headers(),
             )
             data = access_token.safe_json(response)
             if "code" in data or "http_status" in data:
                 module.fail_json(msg='ERROR: ', **data)
-        else:
-            time.sleep(module.params['delay'])
+            if data.get('status') == "installed":
+                cluster_installed = True
+                result['result'] = data
+            elif data.get('status') == "ready":
+                # Retry start installation if the cluster was moved to ready again
+                response = session.post(
+                    ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'] + "/actions/install",
+                    headers=auth_headers(),
+                )
+                data = access_token.safe_json(response)
+                if "code" in data or "http_status" in data:
+                    module.fail_json(msg='ERROR: ', **data)
+            else:
+                time.sleep(module.params['delay'])
+    except requests.exceptions.RequestException as e:
+        module.fail_json(msg='Request failed: {0}'.format(e))
 
     # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results
