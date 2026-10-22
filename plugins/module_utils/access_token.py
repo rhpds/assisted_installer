@@ -9,17 +9,22 @@ from urllib3.util import Retry
 
 SSO_TOKEN_URL = "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
 
-# sso.redhat.com occasionally returns a transient error (429/5xx, or a
-# connection failure) instead of a token response. Retry those a handful of
-# times with backoff before giving up, instead of letting the caller crash
-# on the first hiccup. urllib3's Retry only retries idempotent methods by
-# default, so POST has to be added explicitly via allowed_methods, otherwise
-# this retry configuration would silently never fire for our POST request.
+# sso.redhat.com and api.openshift.com occasionally return a transient
+# error (429/5xx, or a connection failure) instead of a real response.
+# Retry those a handful of times with backoff before giving up, instead of
+# letting the caller crash on the first hiccup. This session is shared by
+# every HTTP verb used by this collection (GET for polling, POST for the
+# SSO token exchange/install actions, PATCH for host updates). urllib3's
+# Retry only retries idempotent methods by default (GET/HEAD/PUT/DELETE/
+# OPTIONS/TRACE), so POST and PATCH have to be added explicitly via
+# allowed_methods - passing allowed_methods as a plain set instead of
+# extending the default would otherwise silently *drop* GET/HEAD/etc.
+# from the retryable set rather than adding to it.
 _RETRY = Retry(
     total=5,
     backoff_factor=1,
     status_forcelist=[429, 500, 502, 503, 504],
-    allowed_methods={"POST"},
+    allowed_methods=Retry.DEFAULT_ALLOWED_METHODS | frozenset({"POST", "PATCH"}),
 )
 
 

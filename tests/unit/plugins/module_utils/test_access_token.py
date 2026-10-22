@@ -93,3 +93,15 @@ class TestRetryConfiguration:
         assert "POST" in access_token._RETRY.allowed_methods
         for status in (429, 500, 502, 503, 504):
             assert status in access_token._RETRY.status_forcelist
+
+    def test_retry_still_covers_get_and_patch_used_by_polling_modules(self):
+        # access_token._get_session() is shared by every module in this
+        # collection, including ones that poll with GET and update hosts
+        # with PATCH (wait_for_hosts.py, install_cluster.py). Explicitly
+        # setting allowed_methods={"POST"} (instead of extending the
+        # default allowlist) would silently drop GET/PATCH from the
+        # retryable set - this must not regress.
+        for method in ("GET", "POST", "PATCH"):
+            assert access_token._RETRY._is_method_retryable(method), (
+                f"{method} must be retryable on the shared session"
+            )
