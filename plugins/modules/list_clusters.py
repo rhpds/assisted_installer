@@ -105,6 +105,11 @@ def run_module():
         supports_check_mode=True,
     )
 
+    # TODO: like the other modules touched in this PR, this still calls
+    # response.json() directly with no handling for a non-200/non-JSON
+    # response (transient 5xx/429 from sso.redhat.com). Follow up by
+    # switching to access_token.safe_json()/access_token._get_session(),
+    # matching create_cluster.py/wait_for_hosts.py/install_cluster.py.
     response = access_token._get_access_token(module.params['offline_token'])
     if response.status_code != 200:
         module.fail_json(msg='Error getting access token ', **response.json())
@@ -121,9 +126,16 @@ def run_module():
     }
     params = module.params.copy()
     params.pop("offline_token")
+    # params was previously built but never passed to session.get() below,
+    # so every filter option here (owner, with_hosts, ams_subscription_ids,
+    # etc.) was silently ignored and this always returned the full,
+    # unfiltered list of clusters in the account. requests already omits
+    # any key whose value is None from the query string, so unset optional
+    # args are safe to pass through as-is.
     response = session.get(
         "https://api.openshift.com/api/assisted-install/v2/clusters",
         headers=headers,
+        params=params,
     )
 
     result['result'] = response.json()
