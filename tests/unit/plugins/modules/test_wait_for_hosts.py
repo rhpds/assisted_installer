@@ -69,7 +69,7 @@ DEFAULT_PARAMS = dict(
 )
 
 
-def _run(monkeypatch, params, session_get_responses, token="tok-1"):
+def _run(monkeypatch, params, session_get_responses, token="tok-1", mock_sleep=True):
     module = FakeModule(dict(DEFAULT_PARAMS, **params))
     monkeypatch.setattr(wait_for_hosts, "AnsibleModule", lambda *a, **kw: module)
 
@@ -83,7 +83,12 @@ def _run(monkeypatch, params, session_get_responses, token="tok-1"):
     session.get.side_effect = session_get_responses
     monkeypatch.setattr(wait_for_hosts.access_token, "_get_session", lambda: session)
 
-    return module, session
+    sleep_mock = None
+    if mock_sleep:
+        sleep_mock = MagicMock()
+        monkeypatch.setattr(wait_for_hosts.time, "sleep", sleep_mock)
+
+    return module, session, sleep_mock
 
 
 class TestWaitForHosts:
@@ -97,7 +102,7 @@ class TestWaitForHosts:
             json_error=ValueError("Expecting value: line 1 column 1 (char 0)"),
             text="",
         )
-        module, _session = _run(monkeypatch, {}, [response])
+        module, _session, _sleep = _run(monkeypatch, {}, [response])
 
         with pytest.raises(SystemExit):
             wait_for_hosts.run_module()
@@ -114,7 +119,7 @@ class TestWaitForHosts:
         # (e.g. {"code": "ERR-123", "reason": "..."}) - this must still be
         # treated as a failure, same as before this fix.
         response = _mock_response(404, json_value={"code": "ERR-404", "reason": "not found"})
-        module, _session = _run(monkeypatch, {}, [response])
+        module, _session, _sleep = _run(monkeypatch, {}, [response])
 
         with pytest.raises(SystemExit):
             wait_for_hosts.run_module()
@@ -129,7 +134,7 @@ class TestWaitForHosts:
                 "hosts": [{"id": "h1", "status": "known", "requested_hostname": "h1"}],
             },
         )
-        module, _session = _run(monkeypatch, {"expected_hosts": 1}, [response])
+        module, _session, _sleep = _run(monkeypatch, {"expected_hosts": 1}, [response])
 
         with pytest.raises(SystemExit):
             wait_for_hosts.run_module()
@@ -147,7 +152,7 @@ class TestWaitForHosts:
                 "hosts": [{"id": "h1", "status": "known", "requested_hostname": "h1"}],
             },
         )
-        module, session = _run(monkeypatch, {}, [cluster_response])
+        module, session, _sleep = _run(monkeypatch, {}, [cluster_response])
         session.post.return_value = _mock_response(
             503, json_error=ValueError("boom"), text="<html>Service Unavailable</html>"
         )
@@ -157,3 +162,68 @@ class TestWaitForHosts:
 
         assert module.fail_json_calls
         assert module.fail_json_calls[0]["http_status"] == 503
+
+    def test_sleeps_once_per_poll_not_once_per_host(self, monkeypatch):
+        # Reproduces the nested-in-the-host-loop bug: with multiple hosts in
+        # a single poll response, none of them ready yet, time.sleep(delay)
+        # must be called exactly once for that poll - not once per host.
+        response = _mock_response(
+            200,
+            json_value={
+                "status": "adding-hosts",
+                "hosts": [
+                    {"id": "h1", "status": "discovering", "requested_hostname": "h1"},
+                    {"id": "h2", "status": "discovering", "requested_hostname": "h2"},
+                    {"id": "h3", "status": "discovering", "requested_hostname": "h3"},
+                ],
+            },
+        )
+        ready_response = _mock_response(
+            200,
+            json_value={
+                "status": "ready",
+                "hosts": [{"id": "h1", "status": "known", "requested_hostname": "h1"}],
+            },
+        )
+        # wait_timeout=20, delay=10 -> max_retries == 2 polls, enough for the
+        # not-ready poll plus the ready poll below.
+        module, _session, sleep_mock = _run(
+            monkeypatch,
+            {"expected_hosts": 1, "wait_timeout": 20, "delay": 10},
+            [response, ready_response],
+        )
+
+        with pytest.raises(SystemExit):
+            wait_for_hosts.run_module()
+
+        assert module.exit_json_calls, module.fail_json_calls
+        # One poll with 3 not-yet-ready hosts must sleep exactly once, not
+        # three times (once per host).
+        assert sleep_mock.call_count == 1
+
+    def test_fails_with_timeout_message_when_hosts_never_become_ready(self, monkeypatch):
+        # Reproduces the other half of the bug: `retries` was never
+        # incremented, so wait_timeout was never enforced and the module
+        # would poll forever instead of failing once the deadline passed.
+        not_ready_response = _mock_response(
+            200,
+            json_value={
+                "status": "adding-hosts",
+                "hosts": [{"id": "h1", "status": "discovering", "requested_hostname": "h1"}],
+            },
+        )
+        # wait_timeout=20, delay=10 -> max_retries == 2 polls.
+        module, session, sleep_mock = _run(
+            monkeypatch,
+            {"wait_timeout": 20, "delay": 10},
+            [not_ready_response, not_ready_response, not_ready_response],
+        )
+
+        with pytest.raises(SystemExit):
+            wait_for_hosts.run_module()
+
+        assert session.get.call_count == 2, "must stop polling once wait_timeout elapses"
+        assert sleep_mock.call_count == 2
+        assert not module.exit_json_calls, "a timeout must not be reported as success"
+        assert module.fail_json_calls
+        assert "Timed out" in module.fail_json_calls[0]["msg"]

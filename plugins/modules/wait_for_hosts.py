@@ -192,16 +192,26 @@ def run_module():
                             if "code" in patch_data or "http_status" in patch_data:
                                 module.fail_json(msg='Request failed: ', **patch_data)
 
-            if ready_hosts == module.params['expected_hosts'] and data['status'] == "ready":
-                cluster_ready = True
-                result['result'] = data
-            elif added_hosts == module.params['expected_hosts'] and data['status'] == "adding-hosts":
-                cluster_ready = True
-                result['result'] = data
-            else:
-                time.sleep(module.params['delay'])
+        # Evaluate readiness once per poll, after all hosts in this response
+        # have been processed - not once per host. (This used to be nested
+        # inside the `for host in data['hosts']:` loop above, which judged
+        # readiness against a partial, still-accumulating per-host tally and
+        # could call time.sleep() multiple times in a single poll whenever
+        # there was more than one host.)
+        if ready_hosts == module.params['expected_hosts'] and data['status'] == "ready":
+            cluster_ready = True
+            result['result'] = data
+        elif added_hosts == module.params['expected_hosts'] and data['status'] == "adding-hosts":
+            cluster_ready = True
+            result['result'] = data
+        else:
+            time.sleep(module.params['delay'])
+        retries += 1
 
     result['result'] = data
+
+    if not cluster_ready:
+        module.fail_json(msg='Timed out waiting for hosts to be ready', **result)
 
     # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results
