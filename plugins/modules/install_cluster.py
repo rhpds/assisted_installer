@@ -113,7 +113,7 @@ def run_module():
         headers=auth_headers(),
     )
     data = access_token.safe_json(response)
-    if "code" in data:
+    if "code" in data or "http_status" in data:
         module.fail_json(msg='ERROR: ', **data)
 
     retries = 0
@@ -136,7 +136,7 @@ def run_module():
             headers=auth_headers(),
         )
         data = access_token.safe_json(response)
-        if "code" in data:
+        if "code" in data or "http_status" in data:
             module.fail_json(msg='ERROR: ', **data)
         if data.get('status') == "installed":
             cluster_installed = True
@@ -148,7 +148,7 @@ def run_module():
                 headers=auth_headers(),
             )
             data = access_token.safe_json(response)
-            if "code" in data:
+            if "code" in data or "http_status" in data:
                 module.fail_json(msg='ERROR: ', **data)
         else:
             time.sleep(module.params['delay'])
