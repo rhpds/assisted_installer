@@ -73,3 +73,12 @@ def load_create_cluster():
         "ansible_collections.rhpds.assisted_installer.plugins.modules.create_cluster",
         str(REPO_ROOT / "plugins" / "modules" / "create_cluster.py"),
     )
+
+
+def load_list_clusters():
+    """Import plugins/modules/list_clusters.py and return the module object."""
+    _register_collection_namespace()
+    return _load_from_path(
+        "ansible_collections.rhpds.assisted_installer.plugins.modules.list_clusters",
+        str(REPO_ROOT / "plugins" / "modules" / "list_clusters.py"),
+    )

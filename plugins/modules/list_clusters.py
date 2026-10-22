@@ -4,7 +4,6 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
-import requests
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
@@ -83,9 +82,11 @@ def run_module():
         offline_token=dict(type='str', required=True)
     )
 
-    session = requests.Session()
-    adapter = requests.adapters.HTTPAdapter(max_retries=5)
-    session.mount('https://', adapter)
+    # Use the shared retrying session (backs off on 429/5xx) for the
+    # Assisted Installer API call too, not just the SSO token endpoint - a
+    # plain requests.Session()/HTTPAdapter(max_retries=5) does not retry
+    # POST or 5xx responses at all.
+    session = access_token._get_session()
 
     # seed the result dict in the object
     # we primarily care about changed and state
@@ -105,14 +106,9 @@ def run_module():
         supports_check_mode=True,
     )
 
-    # TODO: like the other modules touched in this PR, this still calls
-    # response.json() directly with no handling for a non-200/non-JSON
-    # response (transient 5xx/429 from sso.redhat.com). Follow up by
-    # switching to access_token.safe_json()/access_token._get_session(),
-    # matching create_cluster.py/wait_for_hosts.py/install_cluster.py.
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
+    response, token_data = access_token.get_access_token_data(module.params['offline_token'])
+    if response.status_code != 200 or "access_token" not in token_data:
+        module.fail_json(msg='Error getting access token ', **token_data)
 
     # if the user is working with this module in only check mode we do not
     # want to make any changes to the environment, just return the current
@@ -121,7 +117,7 @@ def run_module():
         module.exit_json(**result)
 
     headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
+        "Authorization": "Bearer " + token_data["access_token"],
         "Content-Type": "application/json"
     }
     params = module.params.copy()
@@ -137,8 +133,11 @@ def run_module():
         headers=headers,
         params=params,
     )
+    data = access_token.safe_json(response)
+    if "code" in data or "http_status" in data:
+        module.fail_json(msg='Request failed: ', **data)
 
-    result['result'] = response.json()
+    result['result'] = data
 
     # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results
