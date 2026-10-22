@@ -4,7 +4,6 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
-import requests
 import time
 
 from ansible.module_utils.basic import AnsibleModule
@@ -69,6 +68,8 @@ result:
     returned: always
 '''
 
+ASSISTED_INSTALLER_API = "https://api.openshift.com/api/assisted-install/v2"
+
 
 def run_module():
     # define available arguments/parameters a user can pass to the module
@@ -101,18 +102,29 @@ def run_module():
         required_together=[['configure_hosts', 'infra_env_id']]
     )
 
-    session = requests.Session()
-    adapter = requests.adapters.HTTPAdapter(max_retries=5)
-    session.mount('https://', adapter)
+    # Use the shared retrying session (backs off on 429/5xx) for the Assisted
+    # Installer API calls too, not just the SSO token endpoint - a plain
+    # requests.Session()/HTTPAdapter(max_retries=5) does not retry POST/PATCH
+    # or 5xx responses at all.
+    session = access_token._get_session()
+
+    # Cache the SSO access token instead of fetching a new one on every
+    # polling iteration (this loop can run up to wait_timeout/delay times).
+    # This both reduces load on sso.redhat.com and reduces how often this
+    # module is exposed to any transient errors it returns.
+    token_cache = access_token.AccessTokenCache(module, module.params['offline_token'])
+
+    def auth_headers():
+        return {
+            "Authorization": "Bearer " + token_cache.get(),
+            "Content-Type": "application/json"
+        }
 
     retries = 0
     cluster_ready = False
+    data = {}
     max_retries = module.params['wait_timeout'] / module.params['delay']
     while retries < max_retries and cluster_ready is False:
-        response = access_token._get_access_token(module.params['offline_token'])
-        if response.status_code != 200:
-            module.fail_json(msg='Error getting access token ', **response.json())
-
         # if the user is working with this module in only check mode we do not
         # want to make any changes to the environment, just return the current
         # state with no modifications
@@ -121,74 +133,75 @@ def run_module():
 
         # manipulate or modify the state as needed (this is going to be the
         # part where your module will do what it needs to do)
-        result['access_token'] = response.json()["access_token"]
+        result['access_token'] = token_cache.get()
 
-        headers = {
-            "Authorization": "Bearer " + response.json()["access_token"],
-            "Content-Type": "application/json"
-        }
         response = session.get(
-            "https://api.openshift.com/api/assisted-install/v2/clusters/" + module.params['cluster_id'],
-            headers=headers,
+            ASSISTED_INSTALLER_API + "/clusters/" + module.params['cluster_id'],
+            headers=auth_headers(),
         )
-        if "code" in response.json():
-            module.fail_json(msg='Request failed: ', **response.json())
+        data = access_token.safe_json(response)
+        if "code" in data or "http_status" in data:
+            module.fail_json(msg='Request failed: ', **data)
         ready_hosts = 0
         added_hosts = 0
-        for host in response.json()['hosts']:
+        for host in data['hosts']:
             if host['status'] == "known":
                 ready_hosts = ready_hosts + 1
-                if response.json()['status'] == 'adding-hosts':
+                if data['status'] == 'adding-hosts':
                     responsepost = session.post(
-                        "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'] + "/actions/install",
-                        headers=headers
+                        ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'] + "/actions/install",
+                        headers=auth_headers()
                     )
-                    if "code" in responsepost.json():
-                        module.fail_json(msg='Request failed: ', **responsepatch.json())
+                    post_data = access_token.safe_json(responsepost)
+                    if "code" in post_data or "http_status" in post_data:
+                        module.fail_json(msg='Request failed: ', **post_data)
             if host['status'] == 'added-to-existing-cluster':
                 added_hosts = added_hosts + 1
             if 'configure_hosts' in module.params and module.params['configure_hosts'] is not None:
                 for configure_host in module.params['configure_hosts']:
                     if host['requested_hostname'] == configure_host['hostname']:
                         if host['role'] != configure_host['role']:
-                            data = {"host_role": configure_host['role']}
+                            patch_body = {"host_role": configure_host['role']}
                             responsepatch = session.patch(
-                                "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
-                                headers=headers,
-                                json=data
+                                ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                headers=auth_headers(),
+                                json=patch_body
                             )
-                            if "code" in responsepatch.json():
-                                module.fail_json(msg='Request failed: ', **responsepatch.json())
+                            patch_data = access_token.safe_json(responsepatch)
+                            if "code" in patch_data or "http_status" in patch_data:
+                                module.fail_json(msg='Request failed: ', **patch_data)
                         if "installation_disk" in configure_host:
                             if host['installation_disk_path'] != configure_host['installation_disk']:
-                                data = {"disks_selected_config": [{"id": configure_host['installation_disk'], "role": "install"}]}
+                                patch_body = {"disks_selected_config": [{"id": configure_host['installation_disk'], "role": "install"}]}
                                 responsepatch = session.patch(
-                                    "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
-                                    headers=headers,
-                                    json=data
+                                    ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                    headers=auth_headers(),
+                                    json=patch_body
                                 )
-                                if "code" in responsepatch.json():
-                                    module.fail_json(msg='Request failed: ', **responsepatch.json())
+                                patch_data = access_token.safe_json(responsepatch)
+                                if "code" in patch_data or "http_status" in patch_data:
+                                    module.fail_json(msg='Request failed: ', **patch_data)
                         if "newname" in configure_host:
-                                data = {"host_name": config_host["newname"]}
-                                responsepatch = session.patch(
-                                    "https://api.openshift.com/api/assisted-install/v2/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
-                                    headers=headers,
-                                    json=data
-                                )
-                                if "code" in responsepatch.json():
-                                    module.fail_json(msg='Request failed: ', **responsepatch.json())                        
+                            patch_body = {"host_name": configure_host["newname"]}
+                            responsepatch = session.patch(
+                                ASSISTED_INSTALLER_API + "/infra-envs/" + module.params['infra_env_id'] + "/hosts/" + host['id'],
+                                headers=auth_headers(),
+                                json=patch_body
+                            )
+                            patch_data = access_token.safe_json(responsepatch)
+                            if "code" in patch_data or "http_status" in patch_data:
+                                module.fail_json(msg='Request failed: ', **patch_data)
 
-            if ready_hosts == module.params['expected_hosts'] and response.json()['status'] == "ready":
+            if ready_hosts == module.params['expected_hosts'] and data['status'] == "ready":
                 cluster_ready = True
-                result['result'] = response.json()
-            elif added_hosts == module.params['expected_hosts'] and response.json()['status'] == "adding-hosts":
+                result['result'] = data
+            elif added_hosts == module.params['expected_hosts'] and data['status'] == "adding-hosts":
                 cluster_ready = True
-                result['result'] = response.json()
+                result['result'] = data
             else:
                 time.sleep(module.params['delay'])
 
-    result['result'] = response.json()
+    result['result'] = data
 
     # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results

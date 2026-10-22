@@ -63,42 +63,12 @@ result:
 
 ASSISTED_INSTALLER_API = "https://api.openshift.com/api/assisted-install/v2"
 
-# Red Hat SSO access tokens are typically valid for several minutes. Refresh
-# a bit before actual expiry (clock skew / a slow round-trip) instead of
-# calling the token endpoint on every single polling iteration - this both
-# reduces load on sso.redhat.com and reduces how often we are exposed to any
-# transient errors it returns.
-TOKEN_REFRESH_SKEW_SECONDS = 60
-DEFAULT_TOKEN_LIFETIME_SECONDS = 300
-
-
-class AccessTokenCache:
-    """Caches an SSO access token for the duration of a single module run,
-    only refreshing it once it is close to expiring instead of on every
-    polling iteration."""
-
-    def __init__(self, module, offline_token):
-        self._module = module
-        self._offline_token = offline_token
-        self._token = None
-        self._expires_at = 0.0
-
-    def get(self):
-        if self._token is None or time.monotonic() >= self._expires_at:
-            self._refresh()
-        return self._token
-
-    def _refresh(self):
-        response, data = access_token.get_access_token_data(self._offline_token)
-        if response.status_code != 200 or "access_token" not in data:
-            self._module.fail_json(msg='Error getting access token ', **data)
-        self._token = data["access_token"]
-        expires_in = data.get("expires_in", DEFAULT_TOKEN_LIFETIME_SECONDS)
-        try:
-            expires_in = int(expires_in)
-        except (TypeError, ValueError):
-            expires_in = DEFAULT_TOKEN_LIFETIME_SECONDS
-        self._expires_at = time.monotonic() + max(expires_in - TOKEN_REFRESH_SKEW_SECONDS, 0)
+# AccessTokenCache now lives in module_utils/access_token.py so it can be
+# shared with other polling modules (e.g. wait_for_hosts.py) instead of
+# being duplicated per-module. Re-exported here for backward compatibility
+# with anything (including this module's own tests) referencing
+# install_cluster.AccessTokenCache directly.
+AccessTokenCache = access_token.AccessTokenCache
 
 
 def run_module():

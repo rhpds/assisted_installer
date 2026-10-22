@@ -55,3 +55,21 @@ def load_install_cluster():
         "ansible_collections.rhpds.assisted_installer.plugins.modules.install_cluster",
         str(REPO_ROOT / "plugins" / "modules" / "install_cluster.py"),
     )
+
+
+def load_wait_for_hosts():
+    """Import plugins/modules/wait_for_hosts.py and return the module object."""
+    _register_collection_namespace()
+    return _load_from_path(
+        "ansible_collections.rhpds.assisted_installer.plugins.modules.wait_for_hosts",
+        str(REPO_ROOT / "plugins" / "modules" / "wait_for_hosts.py"),
+    )
+
+
+def load_create_cluster():
+    """Import plugins/modules/create_cluster.py and return the module object."""
+    _register_collection_namespace()
+    return _load_from_path(
+        "ansible_collections.rhpds.assisted_installer.plugins.modules.create_cluster",
+        str(REPO_ROOT / "plugins" / "modules" / "create_cluster.py"),
+    )

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2023, Alberto Gonzalez <alberto.gonzalez@redhat.com>
 # GNU General Public License v3.0+ (see LICENSES/GPL-3.0-or-later.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
+import time
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
@@ -80,6 +82,50 @@ def get_access_token_data(offline_token):
     """
     response = _get_access_token(offline_token)
     return response, safe_json(response)
+
+
+# Red Hat SSO access tokens are typically valid for several minutes. Refresh
+# a bit before actual expiry (clock skew / a slow round-trip) instead of
+# calling the token endpoint on every single polling iteration - this both
+# reduces load on sso.redhat.com and reduces how often a module is exposed
+# to any transient errors it returns.
+TOKEN_REFRESH_SKEW_SECONDS = 60
+DEFAULT_TOKEN_LIFETIME_SECONDS = 300
+
+
+class AccessTokenCache:
+    """Caches an SSO access token for the duration of a single module run,
+    only refreshing it once it is close to expiring instead of on every
+    polling iteration.
+
+    Shared by every module in this collection that polls the Assisted
+    Installer API in a loop (install_cluster, wait_for_hosts, ...), so the
+    caching behavior and the "fail cleanly on a bad token response" behavior
+    only need to be implemented (and tested) once.
+    """
+
+    def __init__(self, module, offline_token):
+        self._module = module
+        self._offline_token = offline_token
+        self._token = None
+        self._expires_at = 0.0
+
+    def get(self):
+        if self._token is None or time.monotonic() >= self._expires_at:
+            self._refresh()
+        return self._token
+
+    def _refresh(self):
+        response, data = get_access_token_data(self._offline_token)
+        if response.status_code != 200 or "access_token" not in data:
+            self._module.fail_json(msg='Error getting access token ', **data)
+        self._token = data["access_token"]
+        expires_in = data.get("expires_in", DEFAULT_TOKEN_LIFETIME_SECONDS)
+        try:
+            expires_in = int(expires_in)
+        except (TypeError, ValueError):
+            expires_in = DEFAULT_TOKEN_LIFETIME_SECONDS
+        self._expires_at = time.monotonic() + max(expires_in - TOKEN_REFRESH_SKEW_SECONDS, 0)
 
 
 def main():
