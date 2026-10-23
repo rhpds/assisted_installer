@@ -119,11 +119,18 @@ def run_module():
             # body do we need safe_json() instead of a bare response.json(), to
             # avoid crashing on a non-JSON error body (HTML error page, etc.)
             # from a transient 5xx/429 outage.
+            #
+            # Cancel errors are non-fatal: the AI API rejects cancel (409)
+            # for clusters not in an installing state (e.g. pending-for-input,
+            # insufficient, ready). Since the caller's intent is to delete the
+            # cluster, failing before the DELETE would be strictly worse than
+            # proceeding - warn and continue so the DELETE is still attempted.
             if len(response.content) > 0:
                 data = access_token.safe_json(response)
                 if "code" in data or "http_status" in data:
-                    result['result'] = data
-                    module.fail_json(msg='Request failed: ', **result)
+                    module.warn(
+                        "Cancel request failed (non-fatal, proceeding to delete): "
+                        + str(data))
                 else:
                     result['changed'] = True
             else:

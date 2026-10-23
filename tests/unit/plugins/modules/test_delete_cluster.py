@@ -43,6 +43,7 @@ class FakeModule:
         self.check_mode = False
         self.fail_json_calls = []
         self.exit_json_calls = []
+        self.warnings = []
 
     def fail_json(self, **kwargs):
         self.fail_json_calls.append(kwargs)
@@ -51,6 +52,9 @@ class FakeModule:
     def exit_json(self, **kwargs):
         self.exit_json_calls.append(kwargs)
         raise SystemExit("exit_json called")
+
+    def warn(self, msg):
+        self.warnings.append(msg)
 
 
 def _mock_response(status_code=200, json_value=None, json_error=None, text="", content=b""):
@@ -128,27 +132,33 @@ class TestDeleteCluster:
         assert not session.get.called
         assert module.exit_json_calls
 
-    def test_fails_cleanly_when_cancel_response_is_not_json(self, monkeypatch):
-        # Reproduces the crash class this fix targets: a non-JSON body
-        # (HTML error page / truncated response) from the cancel POST
-        # during a transient outage.
+    def test_cancel_non_json_response_is_non_fatal_and_delete_still_proceeds(self, monkeypatch):
+        # A non-JSON body (HTML error page / truncated response) from the
+        # cancel POST during a transient outage must be treated as non-fatal
+        # - the DELETE should still be attempted.
         token_response = _mock_response(200, json_value={"access_token": "tok-1"})
         cancel_response = _mock_response(
             503, json_error=ValueError("boom"), text="<html>Service Unavailable</html>"
         )
+        delete_response = _mock_response(204, content=b"")
+        infra_envs_response = _mock_response(200, json_value=[])
         module, session = _run(monkeypatch, params={"cancel": True})
         monkeypatch.setattr(
             delete_cluster.access_token, "_get_access_token", lambda offline_token: token_response
         )
         session.post.return_value = cancel_response
+        session.delete.return_value = delete_response
+        session.get.return_value = infra_envs_response
 
         with pytest.raises(SystemExit):
             delete_cluster.run_module()
 
         assert session.post.called
-        assert module.fail_json_calls
-        assert module.fail_json_calls[0]["result"]["http_status"] == 503
-        assert not session.delete.called, "must fail before attempting the cluster delete"
+        assert session.delete.called, "DELETE must proceed even when cancel fails"
+        assert module.exit_json_calls, module.fail_json_calls
+        assert module.exit_json_calls[0]["changed"] is True
+        assert len(module.warnings) == 1
+        assert "non-fatal" in module.warnings[0]
 
     def test_cancel_with_empty_success_body_is_not_treated_as_a_failure(self, monkeypatch):
         # The cancel action can return an empty body (e.g. 204 No Content)
@@ -173,6 +183,35 @@ class TestDeleteCluster:
 
         assert module.exit_json_calls, module.fail_json_calls
         assert module.exit_json_calls[0]["changed"] is True
+
+    def test_cancel_failure_is_non_fatal_and_delete_still_proceeds(self, monkeypatch):
+        # The AI API rejects POST /actions/cancel with 409 for clusters
+        # that aren't installing (e.g. pending-for-input, insufficient).
+        # This must be treated as non-fatal - the DELETE should still be
+        # attempted so the cluster is actually removed.
+        token_response = _mock_response(200, json_value={"access_token": "tok-1"})
+        cancel_response = _mock_response(
+            409, json_value={"code": "409", "reason": "Cluster is not installing"}
+        )
+        delete_response = _mock_response(204, content=b"")
+        infra_envs_response = _mock_response(200, json_value=[])
+        module, session = _run(monkeypatch, params={"cancel": True})
+        monkeypatch.setattr(
+            delete_cluster.access_token, "_get_access_token", lambda offline_token: token_response
+        )
+        session.post.return_value = cancel_response
+        session.delete.return_value = delete_response
+        session.get.return_value = infra_envs_response
+
+        with pytest.raises(SystemExit):
+            delete_cluster.run_module()
+
+        assert session.post.called, "cancel must be attempted"
+        assert session.delete.called, "DELETE must proceed even when cancel fails"
+        assert module.exit_json_calls, module.fail_json_calls
+        assert module.exit_json_calls[0]["changed"] is True
+        assert len(module.warnings) == 1
+        assert "non-fatal" in module.warnings[0]
 
     def test_fails_cleanly_when_delete_response_is_not_json(self, monkeypatch):
         token_response = _mock_response(200, json_value={"access_token": "tok-1"})
