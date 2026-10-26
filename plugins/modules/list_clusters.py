@@ -39,7 +39,21 @@ options:
         required: false
         type: bool
     owner:
-        description: If provided, returns only clusters that are owned by the current user.
+        description: >-
+            If provided, returns only clusters that are owned by the current user.
+            WARNING - verified against the real Assisted Installer API on 26 Oct
+            2026 to be non-functional in practice: owner=true, owner=false, and
+            owner=1 all return HTTP 200 with a literal [] body (zero clusters),
+            regardless of the calling account's actual clusters. This is not a
+            type/casing issue - the type='bool' handling below (normalizing to a
+            lowercase "true"/"false" string) works exactly as intended and was
+            confirmed via raw curl testing to send the expected query string: the
+            API itself does not return useful data for any value of this param
+            against the account tested. Callers relying on this to scope results
+            (e.g. rhpds/agnosticd-v2's host_ocp4_assisted_installer /
+            host_ocp4_assisted_destroy roles) got an unconditionally empty list
+            and should filter client-side on the full unfiltered result instead;
+            see rhpds/agnosticd-v2#227 for the fix that removed this dependency.
         required: false
         type: bool
     offline_token:
@@ -143,6 +157,15 @@ def run_module():
         # and the API treats `?owner=True` as an unrecognized value, silently
         # returning zero clusters instead of the owned-clusters filter the
         # caller asked for. Normalize to the lowercase string the API expects.
+        #
+        # NOTE (verified 26 Oct 2026): this normalization is necessary but not
+        # sufficient. Even the correctly-lowercased `?owner=true` was tested
+        # directly against the real API and still returns HTTP 200 with a
+        # literal [] body - same as `owner=false` and `owner=1`. The `owner`
+        # filter does not return useful data for any value against the
+        # account tested; see the `owner` option's docstring above and
+        # rhpds/agnosticd-v2#227 for the caller-side fix (drop the param,
+        # filter client-side on the unfiltered list instead).
         if params.get("owner") is not None:
             params["owner"] = str(params["owner"]).lower()
         response = session.get(
