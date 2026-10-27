@@ -4,11 +4,13 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
-import requests
 import json
 
+import requests
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
+
+ASSISTED_INSTALLER_API = "https://api.openshift.com/api/assisted-install/v2"
 
 DOCUMENTATION = r'''
 ---
@@ -202,9 +204,19 @@ def run_module():
         tags=dict(type='str', required=False),
         vip_dhcp_allocation=dict(type='bool', required=False)
     )
-    session = requests.Session()
-    adapter = requests.adapters.HTTPAdapter(max_retries=5)
-    session.mount('https://', adapter)
+    # Use the shared retrying session (backs off on 429/5xx) for the
+    # Assisted Installer API call too, not just the SSO token endpoint - a
+    # plain requests.Session()/HTTPAdapter(max_retries=5) does not retry
+    # POST or 5xx responses at all.
+    #
+    # retry_non_idempotent=False: POST /clusters is not idempotent and the
+    # Assisted Installer API does not enforce name uniqueness, so
+    # status-retrying this specific call risks creating a duplicate cluster
+    # if the first attempt actually succeeded server-side but the response
+    # was lost/delayed (e.g. a 502/504 from the gateway after the backend
+    # already committed the create). Connection-level retries (the request
+    # never reached the server at all) still apply regardless.
+    session = access_token._get_session(retry_non_idempotent=False)
     result = dict(
         changed=False,
     )
@@ -216,31 +228,41 @@ def run_module():
         argument_spec=module_args,
         supports_check_mode=True,
     )
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
-    # if the user is working with this module in only check mode we do not
-    # want to make any changes to the environment, just return the current
-    # state with no modifications
-    if module.check_mode:
-        module.exit_json(**result)
-    headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
-        "Content-Type": "application/json"
-    }
-    params = module.params.copy()
-    params.pop("offline_token")
-    if "cluster_id" in params:
-        params.pop("cluster_id")
-    params["pull_secret"] = json.loads(params["pull_secret"])
-    response = session.post(
-        "https://api.openshift.com/api/assisted-install/v2/clusters",
-        headers=headers,
-        json=params
-    )
-    result['result'] = response.json()
+    # Connection-level failures (DNS, reset, timeout) still raise after the
+    # shared session's retries are exhausted, regardless of
+    # raise_on_status - requests surfaces those as RequestException
+    # subclasses (ConnectionError, Timeout, RetryError, ...). Catch them
+    # here so a sustained outage/network issue produces a clean module
+    # failure instead of an unhandled traceback.
+    try:
+        response, token_data = access_token.get_access_token_data(module.params['offline_token'])
+        if response.status_code != 200 or "access_token" not in token_data:
+            module.fail_json(msg='Error getting access token ', **token_data)
+        # if the user is working with this module in only check mode we do not
+        # want to make any changes to the environment, just return the current
+        # state with no modifications
+        if module.check_mode:
+            module.exit_json(**result)
+        headers = {
+            "Authorization": "Bearer " + token_data["access_token"],
+            "Content-Type": "application/json"
+        }
+        params = module.params.copy()
+        params.pop("offline_token")
+        if "cluster_id" in params:
+            params.pop("cluster_id")
+        params["pull_secret"] = json.loads(params["pull_secret"])
+        response = session.post(
+            ASSISTED_INSTALLER_API + "/clusters",
+            headers=headers,
+            json=params
+        )
+    except requests.exceptions.RequestException as e:
+        module.fail_json(msg='Request failed: {0}'.format(e))
+    data = access_token.safe_json(response)
+    result['result'] = data
     # Key code only appears if there is an error
-    if "code" in response.json():
+    if "code" in data or "http_status" in data:
         module.fail_json(msg='Request failed: ', **result)
     else:
         result['changed'] = True

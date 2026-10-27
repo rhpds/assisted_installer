@@ -4,8 +4,8 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
-import requests
 
+import requests
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.rhpds.assisted_installer.plugins.module_utils import access_token
 
@@ -39,7 +39,19 @@ options:
         required: false
         type: bool
     owner:
-        description: If provided, returns only clusters that are owned by the specified user.
+        description: >-
+            If provided, returns only clusters owned by the given user. This
+            takes a username string, not a boolean flag - e.g. owner=jdoe,
+            not owner=true. Passing a boolean-looking value (owner=true,
+            owner=false, owner=1) is treated as a literal (almost certainly
+            nonexistent) username and returns HTTP 200 with an empty list,
+            not an error, which was confirmed against the real Assisted
+            Installer API on 26 Oct 2026 - verified with a real username and
+            without owner at all, both returned the expected clusters;
+            owner=true consistently returned zero. Callers wanting an
+            owner-scoped list should pass the deploying account's actual
+            username rather than true/false; see rhpds/agnosticd-v2#227 for
+            a caller that instead filters client-side on the unfiltered list.
         required: false
         type: str
     offline_token:
@@ -83,9 +95,11 @@ def run_module():
         offline_token=dict(type='str', required=True)
     )
 
-    session = requests.Session()
-    adapter = requests.adapters.HTTPAdapter(max_retries=5)
-    session.mount('https://', adapter)
+    # Use the shared retrying session (backs off on 429/5xx) for the
+    # Assisted Installer API call too, not just the SSO token endpoint - a
+    # plain requests.Session()/HTTPAdapter(max_retries=5) does not retry
+    # POST or 5xx responses at all.
+    session = access_token._get_session()
 
     # seed the result dict in the object
     # we primarily care about changed and state
@@ -105,28 +119,51 @@ def run_module():
         supports_check_mode=True,
     )
 
-    response = access_token._get_access_token(module.params['offline_token'])
-    if response.status_code != 200:
-        module.fail_json(msg='Error getting access token ', **response.json())
+    # Connection-level failures (DNS, reset, timeout) still raise after the
+    # shared session's retries are exhausted, regardless of
+    # raise_on_status - requests surfaces those as RequestException
+    # subclasses (ConnectionError, Timeout, RetryError, ...). Catch them
+    # here so a sustained outage/network issue produces a clean module
+    # failure instead of an unhandled traceback.
+    try:
+        response, token_data = access_token.get_access_token_data(module.params['offline_token'])
+        if response.status_code != 200 or "access_token" not in token_data:
+            module.fail_json(msg='Error getting access token ', **token_data)
 
-    # if the user is working with this module in only check mode we do not
-    # want to make any changes to the environment, just return the current
-    # state with no modifications
-    if module.check_mode:
-        module.exit_json(**result)
+        # if the user is working with this module in only check mode we do not
+        # want to make any changes to the environment, just return the current
+        # state with no modifications
+        if module.check_mode:
+            module.exit_json(**result)
 
-    headers = {
-        "Authorization": "Bearer " + response.json()["access_token"],
-        "Content-Type": "application/json"
-    }
-    params = module.params.copy()
-    params.pop("offline_token")
-    response = session.get(
-        "https://api.openshift.com/api/assisted-install/v2/clusters",
-        headers=headers,
-    )
+        headers = {
+            "Authorization": "Bearer " + token_data["access_token"],
+            "Content-Type": "application/json"
+        }
+        params = module.params.copy()
+        params.pop("offline_token")
+        # params was previously built but never passed to session.get() below,
+        # so every filter option here (owner, with_hosts, ams_subscription_ids,
+        # etc.) was silently ignored and this always returned the full,
+        # unfiltered list of clusters in the account. requests already omits
+        # any key whose value is None from the query string, so unset optional
+        # args are safe to pass through as-is.
+        #
+        # owner is type='str' (a username, per the owner option's docstring
+        # above) so it is passed through unchanged - no normalization needed.
+        response = session.get(
+            "https://api.openshift.com/api/assisted-install/v2/clusters",
+            headers=headers,
+            params=params,
+        )
+    except requests.exceptions.RequestException as e:
+        module.fail_json(msg='Request failed: {0}'.format(e))
 
-    result['result'] = response.json()
+    data = access_token.safe_json(response)
+    if "code" in data or "http_status" in data:
+        module.fail_json(msg='Request failed: ', **data)
+
+    result['result'] = data
 
     # in the event of a successful module execution, you will want to
     # simple AnsibleModule.exit_json(), passing the key/value results

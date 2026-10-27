@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local scratch script with a real offline_token hardcoded in plaintext -
+# must never be committed.
+check-ocm-cluster-reg.sh
