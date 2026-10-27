@@ -133,23 +133,23 @@ class TestListClusters:
         assert not session.get.called
         assert module.exit_json_calls
 
-    def test_owner_true_is_sent_as_lowercase_string(self, monkeypatch):
-        # owner is type='bool', so Ansible coerces a YAML `owner: true` to
-        # the Python bool True (as it would be in module.params here).
-        # requests would otherwise serialize that as the query string
-        # "True" (str(True)), which the real API treats as an unrecognized
-        # value and silently returns zero clusters instead of filtering -
-        # it must be normalized to the lowercase "true" the API expects.
+    def test_owner_username_is_passed_through_unchanged(self, monkeypatch):
+        # owner is type='str' - it takes a username (per the AI API: "returns
+        # only clusters owned by the specified user"), not a boolean flag.
+        # Confirmed against the real API: owner=true/false/1 return an empty
+        # list (they're treated as literal, nonexistent usernames), while a
+        # real username correctly filters. No normalization is needed or
+        # performed - the value Ansible gives us is passed straight through.
         token_response = _mock_response(200, json_value={"access_token": "tok-1"})
         get_response = _mock_response(200, json_value=[{"id": "cluster-1"}])
-        module, session = _run(monkeypatch, token_response, get_response, params={"owner": True})
+        module, session = _run(monkeypatch, token_response, get_response, params={"owner": "someuser"})
 
         with pytest.raises(SystemExit):
             list_clusters.run_module()
 
         assert session.get.called
         _, kwargs = session.get.call_args
-        assert kwargs["params"]["owner"] == "true"
+        assert kwargs["params"]["owner"] == "someuser"
 
     def test_owner_not_provided_is_omitted_from_params(self, monkeypatch):
         # owner stays None (not normalized) when not provided - requests

@@ -40,22 +40,20 @@ options:
         type: bool
     owner:
         description: >-
-            If provided, returns only clusters that are owned by the current user.
-            WARNING - verified against the real Assisted Installer API on 26 Oct
-            2026 to be non-functional in practice: owner=true, owner=false, and
-            owner=1 all return HTTP 200 with a literal [] body (zero clusters),
-            regardless of the calling account's actual clusters. This is not a
-            type/casing issue - the type='bool' handling below (normalizing to a
-            lowercase "true"/"false" string) works exactly as intended and was
-            confirmed via raw curl testing to send the expected query string: the
-            API itself does not return useful data for any value of this param
-            against the account tested. Callers relying on this to scope results
-            (e.g. rhpds/agnosticd-v2's host_ocp4_assisted_installer /
-            host_ocp4_assisted_destroy roles) got an unconditionally empty list
-            and should filter client-side on the full unfiltered result instead;
-            see rhpds/agnosticd-v2#227 for the fix that removed this dependency.
+            If provided, returns only clusters owned by the given user. This
+            takes a username string, not a boolean flag - e.g. owner=jdoe,
+            not owner=true. Passing a boolean-looking value (owner=true,
+            owner=false, owner=1) is treated as a literal (almost certainly
+            nonexistent) username and returns HTTP 200 with an empty list,
+            not an error, which was confirmed against the real Assisted
+            Installer API on 26 Oct 2026 - verified with a real username and
+            without owner at all, both returned the expected clusters;
+            owner=true consistently returned zero. Callers wanting an
+            owner-scoped list should pass the deploying account's actual
+            username rather than true/false; see rhpds/agnosticd-v2#227 for
+            a caller that instead filters client-side on the unfiltered list.
         required: false
-        type: bool
+        type: str
     offline_token:
         description: Offline token from console.redhat.com
         required: true
@@ -93,7 +91,7 @@ def run_module():
         openshift_cluster_id=dict(type='str', required=False),
         ams_subscription_ids=dict(type='list', required=False),
         with_hosts=dict(type='bool', required=False),
-        owner=dict(type='bool', required=False),
+        owner=dict(type='str', required=False),
         offline_token=dict(type='str', required=True)
     )
 
@@ -151,23 +149,8 @@ def run_module():
         # any key whose value is None from the query string, so unset optional
         # args are safe to pass through as-is.
         #
-        # owner is type='bool' so Ansible correctly coerces a YAML `owner: true`
-        # to the Python bool True instead of the string "True". requests would
-        # otherwise serialize that bool as the query string "True" (str(True)),
-        # and the API treats `?owner=True` as an unrecognized value, silently
-        # returning zero clusters instead of the owned-clusters filter the
-        # caller asked for. Normalize to the lowercase string the API expects.
-        #
-        # NOTE (verified 26 Oct 2026): this normalization is necessary but not
-        # sufficient. Even the correctly-lowercased `?owner=true` was tested
-        # directly against the real API and still returns HTTP 200 with a
-        # literal [] body - same as `owner=false` and `owner=1`. The `owner`
-        # filter does not return useful data for any value against the
-        # account tested; see the `owner` option's docstring above and
-        # rhpds/agnosticd-v2#227 for the caller-side fix (drop the param,
-        # filter client-side on the unfiltered list instead).
-        if params.get("owner") is not None:
-            params["owner"] = str(params["owner"]).lower()
+        # owner is type='str' (a username, per the owner option's docstring
+        # above) so it is passed through unchanged - no normalization needed.
         response = session.get(
             "https://api.openshift.com/api/assisted-install/v2/clusters",
             headers=headers,
